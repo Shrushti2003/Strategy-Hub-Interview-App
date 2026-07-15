@@ -1,0 +1,14 @@
+{
+  "name": "gen-ai-workspace",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npm --prefix Backend run dev",
+    "dev:backend": "npm --prefix Backend run dev",
+    "dev:frontend": "npm --prefix Frontend run dev",
+    "build": "npm --prefix Frontend run build",
+    "lint": "npm --prefix Frontend run lint",
+    "lint:frontend": "npm --prefix Frontend run lint",
+    "start:frontend": "npm --prefix Frontend run start"
+  }
+}

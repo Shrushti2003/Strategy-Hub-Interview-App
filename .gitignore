@@ -1,0 +1,63 @@
+# dependencies
+node_modules/
+**/node_modules/
+.pnp
+.pnp.*
+
+# environment and secrets
+.env
+.env.*
+!.env.example
+.env.local
+.env.production
+.env.development.local
+.env.test.local
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+service-account*.json
+firebase-adminsdk*.json
+
+# local app data
+.data/
+Backend/.data/
+*.sqlite
+*.sqlite3
+*.db
+
+# logs
+logs/
+**/logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# build artifacts and caches
+.next/
+**/.next/
+out/
+build/
+dist/
+coverage/
+.cache/
+.verification-artifacts/
+.agents/
+tmp/
+temp/
+.turbo/
+.vercel/
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.vscode/
+.idea/
