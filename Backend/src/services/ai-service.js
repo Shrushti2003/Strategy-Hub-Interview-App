@@ -29,7 +29,7 @@ async function generateCareerChatResponse({ messages = [], user = {} }) {
     })
   }
 
-  return parsed.reply
+  return removeAutomaticSignature(parsed.reply)
 }
 
 async function streamCareerChatResponse({ messages = [], user = {}, onChunk }) {
@@ -47,17 +47,23 @@ async function streamCareerChatResponse({ messages = [], user = {}, onChunk }) {
     prompt: buildCareerChatMarkdownPrompt({ safeMessages, user }),
     step: "career-chat:stream",
     timeoutMs: 60000,
-    onChunk
+    onChunk: (chunk) => onChunk?.(removeAutomaticSignature(chunk))
   })
 
-  if (!String(reply || "").trim()) {
+  const cleanedReply = removeAutomaticSignature(reply)
+
+  if (!String(cleanedReply || "").trim()) {
     throw new GenerationStepError({
       step: "career-chat:validation",
       reason: "Gemini chat response did not contain a reply."
     })
   }
 
-  return reply
+  return cleanedReply
+}
+
+function removeAutomaticSignature(value = "") {
+  return String(value || "").replace(/\n*\s*Signed,\s*\n\s*Strategy Hub AI\s*$/i, "").trimEnd()
 }
 
 function normalizeCareerChatMessages(messages = []) {
