@@ -10,13 +10,18 @@ const { geminiHealth } = require("./services/gemini/connectivity-audit")
 
 const app = express()
 const allowedOrigins = new Set([
+  "https://strategy-hub-interview-app.vercel.app",
+
   env.FRONTEND_URL,
   env.NEXT_PUBLIC_APP_URL,
+
   "http://localhost:3000",
   "http://127.0.0.1:3000",
   "http://localhost:3001",
   "http://127.0.0.1:3001"
 ].filter(Boolean))
+
+console.log("Allowed Origins:", [...allowedOrigins]);
 
 function getRequestOrigin(req) {
   const origin = req.get("origin")
