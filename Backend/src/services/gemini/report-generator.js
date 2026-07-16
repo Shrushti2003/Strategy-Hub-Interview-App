@@ -173,7 +173,12 @@ async function generateStage({
         promptChars,
         estimatedPromptTokens: promptTokens
       })
-      const value = validate(pick(raw, sectionKey))
+      const validationInput = pick(raw, sectionKey)
+      logPipelineSnapshot(`${stage}:before-response-validator`, validationInput, {
+        requestId,
+        validationAttempt: attempt + 1
+      })
+      const value = validate(validationInput)
       logPipelineSnapshot(`${stage}:after-response-validator`, value, {
         requestId,
         validationAttempt: attempt + 1
@@ -371,6 +376,7 @@ async function generateInterviewReport({ resume = "", selfDescription = "", jobD
     generationWarnings
   })
   logPipelineSnapshot("report-generator:after-merge", merged, { requestId })
+  logPipelineSnapshot("report-generator:before-final-validation", merged, { requestId })
   const report = validateReport(merged, context)
   logPipelineSnapshot("report-generator:after-final-validation", report, { requestId })
   profileStageEnd(requestId, "Merge And Validate Report", mergeStartedAt, totalStartedAt, "SUCCESS")

@@ -247,7 +247,7 @@ function validateQuestionSection(rawQuestions, key, options = {}) {
   if (errors.length) {
     throw new GenerationStepError({
       step: `response-validator:${key}`,
-      reason: `${label} failed validation.`,
+      reason: `${label} validation failed: ${errors.join(" ")}`,
       details: errors,
       payload: { errors, receivedCount: questions.length },
       statusCode: 422,

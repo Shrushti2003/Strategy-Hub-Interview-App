@@ -384,10 +384,16 @@ function serializeJobError(error) {
     const fallbackMessage = isQuotaError
         ? "Gemini quota exceeded. Please try again later."
         : "Interview generation failed."
+    const rawReason = sanitizeMessage(error?.reason || error?.message || fallbackMessage)
+    const rawDetails = sanitizeMessage(error?.details || "")
+    const genericValidationReason = /failed validation|failed critical validation|incomplete and was not marked completed/i.test(rawReason)
+    const publicReason = !isQuotaError && rawDetails && genericValidationReason
+        ? rawDetails
+        : rawReason
 
     return {
-        message: sanitizeMessage(isQuotaError ? fallbackMessage : (error?.message || fallbackMessage)),
-        reason: sanitizeMessage(isQuotaError ? fallbackMessage : (error?.reason || error?.message || fallbackMessage)),
+        message: sanitizeMessage(isQuotaError ? fallbackMessage : publicReason),
+        reason: sanitizeMessage(isQuotaError ? fallbackMessage : publicReason),
         details: sanitizeMessage(error?.details || error?.stack || ""),
         step: sanitizeMessage(error?.step || "interview-generation"),
         timestamp: new Date()
@@ -406,6 +412,10 @@ function assertCompleteGeneratedReport(report = {}, stage = "generated-report") 
     const roadmap = Array.isArray(report.roadmap || report.preparationPlan)
         ? report.roadmap || report.preparationPlan
         : []
+
+    logPipelineSnapshot(`completion-validation:${stage}:before-validation`, report, {
+        stage
+    })
 
     if (Number(report.matchScore || 0) <= 0) errors.push("matchScore must be greater than 0.")
     if (technicalQuestions.length < 20) errors.push(`technicalQuestions requires 20 items; received ${technicalQuestions.length}.`)
