@@ -64,7 +64,7 @@ async function streamCareerChatResponse({ messages = [], user = {}, onChunk }) {
 
 function removeAutomaticSignature(value = "") {
   const text = String(value || "")
-  const automaticSignaturePattern = /(?:\r?\n)+[ \t]*Signed,\s*\r?\n[ \t]*Strategy Hub AI[ \t]*$/i
+  const automaticSignaturePattern = /(?:^|(?:\r?\n)+)[ \t]*(?:Signed,?[ \t]*(?:\r?\n)+[ \t]*)?Strategy Hub AI[ \t]*$/i
   return automaticSignaturePattern.test(text) ? text.replace(automaticSignaturePattern, "") : text
 }
 
