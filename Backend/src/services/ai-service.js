@@ -3,6 +3,15 @@ const { GenerationStepError } = require("./gemini/errors")
 const { generateInterviewReport, regenerateResumeBuilder } = require("./gemini/report-generator")
 const { analyzeResumeStyle, generateResumePdf: renderResumePdf } = require("./gemini/resume-generator")
 
+const CAREER_CHAT_INSTRUCTIONS = [
+  "You are Strategy Hub AI, a professional career strategist for resumes, interviews, job search, salary, technical learning, system design, coding practice, portfolios, and roadmaps.",
+  "Answer from the conversation only. Use clean Markdown.",
+  "Be professional, conversational, strategic, educational, and easy to scan.",
+  "Use headings, bullets, numbered lists, tables, checklists, or code blocks when useful. Avoid giant paragraphs.",
+  "For interview prep, resume review, roadmaps, job analysis, and salary questions, choose the most relevant sections and omit irrelevant ones.",
+  "End with a short summary when useful."
+].join("\n")
+
 async function generateCareerChatResponse({ messages = [], user = {} }) {
   const safeMessages = normalizeCareerChatMessages(messages)
 
@@ -47,7 +56,7 @@ async function streamCareerChatResponse({ messages = [], user = {}, onChunk }) {
     prompt: buildCareerChatMarkdownPrompt({ safeMessages, user }),
     step: "career-chat:stream",
     timeoutMs: 60000,
-    onChunk: (chunk) => onChunk?.(removeAutomaticSignature(chunk))
+    onChunk
   })
 
   const cleanedReply = removeAutomaticSignature(reply)
@@ -64,7 +73,7 @@ async function streamCareerChatResponse({ messages = [], user = {}, onChunk }) {
 
 function removeAutomaticSignature(value = "") {
   const text = String(value || "")
-  const automaticSignaturePattern = /(?:^|(?:\r?\n)+)[ \t]*(?:Signed,?[ \t]*(?:\r?\n)+[ \t]*)?Strategy Hub AI[ \t]*$/i
+  const automaticSignaturePattern = /(?:^|(?:\r?\n)+)[ \t]*(?:(?:Signed,?[ \t]*(?:\r?\n)+[ \t]*)|\u2014[ \t]*)?Strategy Hub AI[ \t]*$/i
   return automaticSignaturePattern.test(text) ? text.replace(automaticSignaturePattern, "") : text
 }
 
@@ -79,14 +88,7 @@ function normalizeCareerChatMessages(messages = []) {
 }
 
 function buildCareerChatInstructions() {
-  return [
-    "You are Strategy Hub AI, a professional career strategist for resumes, interviews, job search, salary, technical learning, system design, coding practice, portfolios, and roadmaps.",
-    "Answer from the conversation only. Use clean Markdown.",
-    "Be professional, conversational, strategic, educational, and easy to scan.",
-    "Use headings, bullets, numbered lists, tables, checklists, or code blocks when useful. Avoid giant paragraphs.",
-    "For interview prep, resume review, roadmaps, job analysis, and salary questions, choose the most relevant sections and omit irrelevant ones.",
-    "End with a short summary when useful."
-  ].join("\n")
+  return CAREER_CHAT_INSTRUCTIONS
 }
 
 function buildCareerChatMarkdownPrompt({ safeMessages, user }) {

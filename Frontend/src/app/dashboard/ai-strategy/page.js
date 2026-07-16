@@ -17,7 +17,6 @@ import {
   Search,
   Send,
   Share2,
-  Sparkles,
   Square,
   Trash2,
   UserRound,
@@ -945,19 +944,18 @@ function ChatMessage({ message, copied, onCopy, onRetry, onRegenerate, onShare, 
               : "px-1 py-1 text-muted-foreground"
         )}
       >
-        <div className={cn("flex items-center gap-3", isUser && "justify-between")}>
-          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em]">
-            {isUser ? <UserRound className="size-3.5" /> : <Sparkles className="size-3.5" />}
-            {isUser ? "You" : "Strategy AI"}
-          </div>
-
-          {isUser ? (
+        {isUser ? (
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em]">
+              <UserRound className="size-3.5" />
+              You
+            </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Clock3 className="size-3.5" />
               {formatMessageTime(message.createdAt)}
             </div>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
 
         <MarkdownContent content={message.content} isError={message.isError} />
 
@@ -1026,10 +1024,6 @@ function TypingIndicator() {
         <Bot className="size-4" />
       </div>
       <div className="space-y-2 px-1 py-1 text-sm text-muted-foreground">
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.16em]">
-          <Sparkles className="size-3.5" />
-          Strategy AI
-        </div>
         <p>Thinking...</p>
       </div>
     </div>

@@ -696,81 +696,165 @@ async function streamText({ prompt, step, timeoutMs = DEFAULT_TIMEOUT_MS, reques
   let lastError = null
 
   for (const model of scopedModelChain) {
-    try {
-      const response = await callGeminiWithRetry({
-        step,
-        model,
-        timeoutMs,
-        requestId: effectiveRequestId,
-        requestPayload: {
-          model,
-          contents: String(prompt || ""),
-          config: {
-            httpOptions: {
-              timeout: timeoutMs
-            }
-          }
+    const requestPayload = {
+      model,
+      contents: String(prompt || ""),
+      config: {
+        httpOptions: {
+          timeout: timeoutMs
         }
-      })
+      }
+    }
+    const promptSize = String(requestPayload.contents || "").length
+    const maxAttempts = DEFAULT_MAX_RETRIES + 1
 
-      const fullText = String(response.text || "")
-      if (fullText) onChunk?.(fullText)
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+      const attemptStartedAt = Date.now()
+      let fullText = ""
 
-      markModelSuccessfulForRequest({ requestId: effectiveRequestId, model, step })
-      return fullText
-    } catch (error) {
-      if (error instanceof GenerationStepError) {
-        lastError = error
+      try {
+        logStep(step, "Gemini streaming request attempt started", {
+          model,
+          endpoint: `${ENDPOINT}Stream`,
+          requestId: effectiveRequestId,
+          attempt: attempt + 1,
+          maxAttempts,
+          timeoutMs,
+          promptSize
+        })
 
-        if (error.shouldFallbackModel) {
-          if (error.quotaExhausted) {
+        const stream = await client.models.generateContentStream(requestPayload)
+        let firstChunkElapsedMs = null
+
+        for await (const chunk of stream) {
+          const chunkText = String(chunk?.text || "")
+          if (!chunkText) continue
+
+          if (firstChunkElapsedMs === null) {
+            firstChunkElapsedMs = Date.now() - attemptStartedAt
+            logStep(step, "Gemini streaming first chunk received", {
+              model,
+              endpoint: `${ENDPOINT}Stream`,
+              requestId: effectiveRequestId,
+              attempt: attempt + 1,
+              firstChunkElapsedMs,
+              promptSize
+            })
+          }
+
+          fullText += chunkText
+          onChunk?.(chunkText)
+        }
+
+        logStep(step, "Gemini streaming response completed", {
+          model,
+          endpoint: `${ENDPOINT}Stream`,
+          requestId: effectiveRequestId,
+          attempt: attempt + 1,
+          elapsedMs: Date.now() - attemptStartedAt,
+          firstChunkElapsedMs,
+          promptSize,
+          responseSize: fullText.length,
+          responseChars: fullText.length,
+          hasText: Boolean(fullText.trim()),
+          finalStatus: "success"
+        })
+
+        markModelSuccessfulForRequest({ requestId: effectiveRequestId, model, step })
+        return fullText
+      } catch (error) {
+        if (error instanceof GenerationStepError) {
+          lastError = error
+
+          if (error.shouldFallbackModel && !fullText) {
+            if (error.quotaExhausted) {
+              markModelUnavailableForRequest({
+                requestId: effectiveRequestId,
+                model,
+                step,
+                googleError: error.payload?.googleError || error.googleError || {}
+              })
+            }
+            break
+          }
+
+          throw error
+        }
+
+        const googleError = extractGoogleError(error)
+        const classification = classifyGoogleError(googleError)
+        const quotaExhausted = isQuotaGoogleError(googleError)
+        const canRetry = !fullText && classification.retryable && isRetryableGoogleError(googleError) && attempt < maxAttempts - 1
+        const wrapped = new GenerationStepError({
+          step,
+          reason: classification.reason,
+          details: googleError,
+          payload: {
+            model,
+            endpoint: `${ENDPOINT}Stream`,
+            requestId: effectiveRequestId,
+            attempt: attempt + 1,
+            elapsedMs: Date.now() - attemptStartedAt,
+            googleError,
+            promptSize,
+            responseSize: fullText.length,
+            finalStatus: "failed"
+          },
+          statusCode: classification.statusCode,
+          retryable: classification.retryable,
+          cause: error
+        })
+        wrapped.shouldFallbackModel = !fullText && shouldFallbackModel(googleError)
+        wrapped.quotaExhausted = quotaExhausted
+        lastError = wrapped
+
+        logFailure(step, error, {
+          model,
+          endpoint: `${ENDPOINT}Stream`,
+          requestId: effectiveRequestId,
+          attempt: attempt + 1,
+          elapsedMs: Date.now() - attemptStartedAt,
+          googleError,
+          promptSize,
+          responseSize: fullText.length,
+          quotaFailure: quotaExhausted,
+          retryable: canRetry
+        })
+
+        if (canRetry) {
+          const delayMs = retryDelayMs(attempt)
+          logStep(step, "Retrying Gemini streaming request after backoff", {
+            model,
+            endpoint: `${ENDPOINT}Stream`,
+            requestId: effectiveRequestId,
+            retryAttempt: attempt + 1,
+            maxRetries: DEFAULT_MAX_RETRIES,
+            nextAttempt: attempt + 2,
+            delayMs,
+            googleStatus: googleError.code,
+            httpStatus: googleError.httpStatus,
+            networkCode: googleError.networkCode,
+            retryReason: classification.reason,
+            quotaFailure: quotaExhausted
+          })
+          await sleep(delayMs)
+          continue
+        }
+
+        if (wrapped.shouldFallbackModel) {
+          if (quotaExhausted) {
             markModelUnavailableForRequest({
               requestId: effectiveRequestId,
               model,
               step,
-              googleError: error.payload?.googleError || error.googleError || {}
+              googleError
             })
           }
-          continue
+          break
         }
 
-        throw error
+        throw wrapped
       }
-
-      const googleError = extractGoogleError(error)
-      const classification = classifyGoogleError(googleError)
-      const quotaExhausted = isQuotaGoogleError(googleError)
-      const wrapped = new GenerationStepError({
-        step,
-        reason: classification.reason,
-        details: googleError,
-        payload: {
-          model,
-          endpoint: ENDPOINT,
-          requestId: effectiveRequestId,
-          googleError
-        },
-        statusCode: classification.statusCode,
-        retryable: classification.retryable,
-        cause: error
-      })
-      wrapped.shouldFallbackModel = shouldFallbackModel(googleError)
-      wrapped.quotaExhausted = quotaExhausted
-      lastError = wrapped
-
-      if (wrapped.shouldFallbackModel) {
-        if (quotaExhausted) {
-          markModelUnavailableForRequest({
-            requestId: effectiveRequestId,
-            model,
-            step,
-            googleError
-          })
-        }
-        continue
-      }
-
-      throw wrapped
     }
   }
 
