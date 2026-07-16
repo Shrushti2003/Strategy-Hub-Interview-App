@@ -38,7 +38,6 @@ export default function AiGenerationFlow() {
   const [reports, setReports] = useState([]);
   const [deletingReportId, setDeletingReportId] = useState("");
   const [error, setError] = useState("");
-  const [processingJob, setProcessingJob] = useState(null);
   const pollTimeoutRef = useRef(null);
 
   const canGenerate = useMemo(
@@ -55,7 +54,7 @@ export default function AiGenerationFlow() {
 
     try {
       const data = await getAllReports();
-      setReports(data.interviewReports || []);
+      setReports((data.interviewReports || []).filter(isCompletedReport));
     } catch {
       toast.error("Could not load recent interview plans.");
     } finally {
@@ -126,7 +125,6 @@ export default function AiGenerationFlow() {
 
     setError("");
     setIsGenerating(true);
-    setProcessingJob(null);
 
     try {
       const formData = new FormData();
@@ -142,24 +140,6 @@ export default function AiGenerationFlow() {
         throw new Error("The backend did not return a report id.");
       }
 
-      const processingReport = data.interviewReport || {
-        _id: reportId,
-        title: "Interview strategy is being generated",
-        generationStatus: "processing",
-        generationStage: "queued",
-        createdAt: new Date().toISOString(),
-      };
-
-      setReports((current) => [
-        processingReport,
-        ...current.filter((item) => item._id !== reportId),
-      ]);
-      setProcessingJob({
-        reportId,
-        status: "processing",
-        stage: "queued",
-      });
-      toast.success("Interview generation started.");
       pollReportStatus(reportId);
     } catch (err) {
       const backendError = err?.response?.data;
@@ -177,7 +157,6 @@ export default function AiGenerationFlow() {
       setError(detailedMessage);
       toast.error(detailedMessage);
       setIsGenerating(false);
-      setProcessingJob(null);
     }
   }
 
@@ -188,11 +167,6 @@ export default function AiGenerationFlow() {
 
     try {
       const statusData = await getReportStatus(reportId);
-      setProcessingJob({
-        reportId,
-        status: statusData.status,
-        stage: statusData.stage || "",
-      });
 
       if (statusData.status === "completed") {
         const reportData = await getReportById(reportId);
@@ -202,13 +176,11 @@ export default function AiGenerationFlow() {
           throw new Error("The completed report could not be loaded.");
         }
 
+        setIsGenerating(false);
         setReports((current) => [
           completedReport,
           ...current.filter((item) => item._id !== reportId),
         ]);
-        setIsGenerating(false);
-        setProcessingJob(null);
-        toast.success("Generation completed.");
         router.push(`/dashboard/interview/${reportId}`);
         return;
       }
@@ -216,7 +188,6 @@ export default function AiGenerationFlow() {
       if (statusData.status === "failed") {
         const message = statusData.error || "Interview generation failed. Please try again.";
         setIsGenerating(false);
-        setProcessingJob(null);
         setError(message);
         await loadReports();
         toast.error(message);
@@ -227,7 +198,6 @@ export default function AiGenerationFlow() {
     } catch (err) {
       const message = err?.response?.data?.message || "Could not check generation status.";
       setIsGenerating(false);
-      setProcessingJob(null);
       setError(message);
       toast.error(message);
     }
@@ -348,7 +318,7 @@ export default function AiGenerationFlow() {
 
         <div className="flex flex-col gap-4 border-t border-border p-5 sm:flex-row sm:items-center sm:justify-between lg:p-7">
           <p className="text-sm text-muted-foreground">
-            AI-Powered Strategy Generation • Background processing keeps the dashboard responsive
+            AI-Powered Strategy Generation
           </p>
           <Button
             type="submit"
@@ -357,23 +327,9 @@ export default function AiGenerationFlow() {
             className="h-12 min-w-64 bg-gradient-to-r from-fuchsia-500 to-pink-600 text-base text-white shadow-lg shadow-fuchsia-950/30 hover:brightness-110"
           >
             {isGenerating ? <Loader2 className="size-4 animate-spin" /> : <Star className="size-4" />}
-            {isGenerating ? "Generating in Background" : "Generate My Interview Strategy"}
+            {isGenerating ? "Generating..." : "Generate My Interview Strategy"}
           </Button>
         </div>
-
-        {processingJob ? (
-          <div className="border-t border-fuchsia-400/25 bg-fuchsia-500/10 px-5 py-4 text-sm text-fuchsia-100 lg:px-7">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <span className="inline-flex items-center gap-2 font-semibold">
-                <Loader2 className="size-4 animate-spin" />
-                Strategy generation is running in the background
-              </span>
-              <span className="text-xs uppercase tracking-[0.18em] text-fuchsia-200/80">
-                {formatStage(processingJob.stage)}
-              </span>
-            </div>
-          </div>
-        ) : null}
 
         {error ? (
           <div className="border-t border-destructive/25 bg-destructive/10 px-5 py-4 text-sm text-destructive lg:px-7">
@@ -429,9 +385,6 @@ export default function AiGenerationFlow() {
 function RecentPlanCard({ report, onOpen, onDelete, isDeleting }) {
   const title = report.jobTitle || report.title || "Interview Plan";
   const company = report.company || "";
-  const generationStatus = report.generationStatus || "completed";
-  const isProcessing = generationStatus === "processing";
-  const isFailed = generationStatus === "failed";
 
   return (
     <article className="group rounded-xl border border-border bg-card/90 p-5 shadow-xl shadow-black/10 transition-all hover:-translate-y-0.5 hover:border-fuchsia-400/45">
@@ -458,38 +411,23 @@ function RecentPlanCard({ report, onOpen, onDelete, isDeleting }) {
 
       <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
         <CalendarDays className="size-4 text-fuchsia-300" />
-        <span>{isProcessing ? "Started" : isFailed ? "Failed" : "Generated"} on {formatDate(report.createdAt)}</span>
+        <span>Generated on {formatDate(report.createdAt)}</span>
       </div>
 
       <div className="mt-6 flex items-center justify-between gap-4">
-        <Badge className={cn(
-          "border-fuchsia-400/35 bg-fuchsia-500/15 text-fuchsia-100",
-          isProcessing && "border-blue-400/35 bg-blue-500/15 text-blue-100",
-          isFailed && "border-red-400/35 bg-red-500/15 text-red-100"
-        )} variant="outline">
-          {isProcessing
-            ? formatStage(report.generationStage || "processing")
-            : isFailed
-              ? "Generation failed"
-              : `Match Score: ${Number(report.matchScore || 0)}%`}
+        <Badge className="border-fuchsia-400/35 bg-fuchsia-500/15 text-fuchsia-100" variant="outline">
+          Match Score: {Number(report.matchScore || 0)}%
         </Badge>
         <Button
           type="button"
           variant="ghost"
           onClick={onOpen}
-          disabled={isProcessing || isFailed}
           className="text-fuchsia-200 hover:text-white"
         >
-          {isProcessing ? <Loader2 className="size-4 animate-spin" /> : null}
-          {isProcessing ? "Processing" : isFailed ? "Failed" : "Open"}
-          {!isProcessing && !isFailed ? (
-            <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-          ) : null}
+          Open
+          <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
         </Button>
       </div>
-      {isFailed && report.generationError?.reason ? (
-        <p className="mt-3 line-clamp-2 text-sm text-red-200/90">{report.generationError.reason}</p>
-      ) : null}
     </article>
   );
 }
@@ -548,39 +486,10 @@ function formatFileSize(size) {
   return `${(size / 1024 / 1024).toFixed(2)} MB`;
 }
 
-function formatStage(value = "") {
-  const rawValue = String(value || "processing");
-  const retryMatch = rawValue.match(/^retrying-gemini-attempt-(\d+)-of-(\d+)$/i);
-
-  if (retryMatch) {
-    return `Retrying Gemini... Attempt ${retryMatch[1]} of ${retryMatch[2]}`;
-  }
-
-  const stageLabels = {
-    queued: "Waiting for Gemini...",
-    processing: "Waiting for Gemini...",
-    "extracting-files": "Reading uploaded files...",
-    "analyzing-resume-style": "Analyzing resume style...",
-    "waiting-for-gemini": "Waiting for Gemini...",
-    "generating-interview": "Waiting for Gemini...",
-    "finalizing-report": "Finalizing report...",
-    "saving-report": "Finalizing report...",
-    completed: "Generation completed",
-    failed: "Generation failed",
-  };
-
-  if (stageLabels[rawValue]) {
-    return stageLabels[rawValue];
-  }
-
-  const label = rawValue
-    .replace(/[-_]+/g, " ")
-    .trim();
-
-  return label
-    ? label.charAt(0).toUpperCase() + label.slice(1)
-    : "Processing";
+function isCompletedReport(report) {
+  return (report?.generationStatus || "completed") === "completed";
 }
+
 
 function formatDate(value) {
   if (!value) return "Just now";
