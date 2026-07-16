@@ -24,6 +24,9 @@ function summarizeGeneratedPayload(value = {}) {
   const technicalQuestions = Array.isArray(report?.technicalQuestions) ? report.technicalQuestions : []
   const behavioralQuestions = Array.isArray(report?.behavioralQuestions) ? report.behavioralQuestions : []
   const resumeQuestions = Array.isArray(report?.resumeQuestions) ? report.resumeQuestions : []
+  const behavioralFollowUpsMissingCount = behavioralQuestions.filter((question) =>
+    !Array.isArray(question?.followUps) || question.followUps.length === 0
+  ).length
 
   return {
     payloadBytes: payloadSize(report),
@@ -33,6 +36,8 @@ function summarizeGeneratedPayload(value = {}) {
     behavioralQuestionsExists: Array.isArray(report?.behavioralQuestions),
     behavioralCount: behavioralQuestions.length,
     behavioralQuestionsLength: behavioralQuestions.length,
+    behavioralFollowUpsMissingCount,
+    behavioralFollowUpsComplete: behavioralQuestions.length > 0 && behavioralFollowUpsMissingCount === 0,
     resumeQuestionsExists: Array.isArray(report?.resumeQuestions),
     resumeCount: resumeQuestions.length,
     resumeQuestionsLength: resumeQuestions.length,

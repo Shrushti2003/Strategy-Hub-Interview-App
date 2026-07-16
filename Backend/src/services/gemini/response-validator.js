@@ -222,6 +222,9 @@ function questionErrors(question, label) {
   const errors = []
   if (question.question.length < 8) errors.push(`${label} question ${question._index + 1} is missing a usable question.`)
   if (question.answer.length < 30) errors.push(`${label} question ${question._index + 1} is missing a usable answer.`)
+  if (!Array.isArray(question.followUps) || question.followUps.length === 0) {
+    errors.push(`${label} question ${question._index + 1} is missing followUps.`)
+  }
   return errors
 }
 

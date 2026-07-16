@@ -85,6 +85,7 @@ Generate exactly 10 behavioral interview questions specific to the role and seni
 Return: {"behavioralQuestions":[]}
 ${questionShape(',"star":{"situation":"","task":"","action":"","result":""}')}
 Every item must include a complete STAR answer. Answers must be unique.
+Every item must include followUps as an array of 2 to 5 realistic follow-up questions.
 Include best answering framework, expected speaking tone, recommended answer structure, and suggested duration using existing fields.
 ${questionCoachingInstruction("behavioral")}
 ${validationHint(feedback)}`
@@ -146,6 +147,7 @@ Return exactly one populated JSON object with 20 technicalQuestions, 10 behavior
 Technical questions must be specific to the role, skills, tools, and responsibilities.
 Technical follow-ups should deepen naturally from basics to implementation, metrics, debugging, scale, security, or tradeoffs.
 Behavioral questions must be specific to the role and seniority and include complete STAR answers.
+Every behavioralQuestions item must include followUps as an array of 2 to 5 realistic follow-up questions.
 Resume questions must reference visible candidate/job evidence from resume, self-description, work history, projects, achievements, or job requirements. Avoid generic resume questions when personalized context exists.
 ${questionShape()}
 Behavioral items additionally need "star":{"situation":"","task":"","action":"","result":""}.
