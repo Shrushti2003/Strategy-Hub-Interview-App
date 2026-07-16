@@ -1,7 +1,8 @@
 const { GoogleGenAI } = require("@google/genai")
 const { env } = require("../../config/env")
 const { GenerationStepError, logFailure, logStep } = require("./errors")
-const { parseJsonOnly } = require("./json-parser")
+const { parseJsonOnly, findBalancedJson } = require("./json-parser")
+const { summarizeGeneratedPayload } = require("./pipeline-snapshot")
 
 const DEFAULT_MODEL = "gemini-3.5-flash"
 const CANDIDATE_MODELS = [
@@ -153,6 +154,22 @@ function parseJsonMessage(message = "") {
     return JSON.parse(message)
   } catch {
     return null
+  }
+}
+
+function summarizeRawJsonResponse(text = "") {
+  const raw = String(text || "")
+  try {
+    return summarizeGeneratedPayload(JSON.parse(raw))
+  } catch {
+    const extracted = findBalancedJson(raw)
+    if (!extracted) return {}
+
+    try {
+      return summarizeGeneratedPayload(JSON.parse(extracted))
+    } catch {
+      return {}
+    }
   }
 }
 
@@ -591,7 +608,14 @@ async function generateJson({ prompt, step, timeoutMs = DEFAULT_TIMEOUT_MS, maxR
       })
 
       markModelSuccessfulForRequest({ requestId: effectiveRequestId, model, step })
-      return parseJsonOnly(String(response.text || ""), `${step}:parse`)
+      const responseText = String(response.text || "")
+      logStep(step, "Raw Gemini response diagnostics before JSON parsing", {
+        requestId: effectiveRequestId,
+        model,
+        responseChars: responseText.length,
+        ...summarizeRawJsonResponse(responseText)
+      })
+      return parseJsonOnly(responseText, `${step}:parse`)
     } catch (error) {
       lastError = error
 

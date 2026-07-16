@@ -134,6 +134,8 @@ Return exactly this JSON shape:
 strategy must contain arrays for: importantTopics, frequentlyAskedAreas, skillsToStrengthen, commonMistakes, salaryNegotiationTips, interviewTips, finalChecklist, topicsToPrioritize, topicsSafeToSkip, likelyInterviewRounds, preparationOrder, timeAllocation, companyExpectations, highImpactConcepts, mostProbableQuestions, commonRejectionReasons, finalInterviewTips, roadmapImmediate, roadmapOneWeek, roadmapTwoWeeks, roadmapOneMonth, roadmapAdvanced, interviewReadyChecklist, freeLearningResources, priorityCritical, priorityHigh, priorityMedium, priorityLow.
 Each priority item should be "Topic - short explanation". Keep all items concise.
 Ground ATS findings in the job description and supplied candidate evidence only.
+atsAnalysis is required and must include non-empty ATS keyword findings keyed to this candidate and job.
+skillGaps is required and must contain at least one supported gap. If the candidate is strong, include the smallest real gap or growth area supported by the evidence; do not invent unrelated gaps.
 For skillGaps, choose only gaps supported by the resume/self-description versus the job description. Do not change scoring semantics.${validationHint(feedback)}`
 }
 

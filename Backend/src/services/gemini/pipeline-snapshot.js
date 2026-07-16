@@ -17,6 +17,10 @@ function summarizeGeneratedPayload(value = {}) {
   const roadmap = Array.isArray(report?.roadmap || report?.preparationPlan)
     ? report.roadmap || report.preparationPlan
     : []
+  const atsAnalysis = report?.atsAnalysis && typeof report.atsAnalysis === "object" && !Array.isArray(report.atsAnalysis)
+    ? report.atsAnalysis
+    : {}
+  const skillGaps = Array.isArray(report?.skillGaps) ? report.skillGaps : []
 
   return {
     payloadBytes: payloadSize(report),
@@ -31,8 +35,13 @@ function summarizeGeneratedPayload(value = {}) {
     strategyExists: hasObject(report?.strategy),
     resumeBuilderExists: hasObject(report?.resumeBuilder) && report.resumeBuilder?.status !== "unavailable",
     atsResumeExists: hasObject(report?.atsResumeData || report?.atsResume),
+    atsAnalysisExists: hasObject(atsAnalysis),
+    atsAnalysisKeyCount: Object.keys(atsAnalysis).length,
+    atsAnalysisKeys: Object.keys(atsAnalysis),
     matchScore: Number(report?.matchScore || 0),
-    skillGapCount: Array.isArray(report?.skillGaps) ? report.skillGaps.length : 0,
+    skillGapsExists: skillGaps.length > 0,
+    skillGapsLength: skillGaps.length,
+    skillGapCount: skillGaps.length,
     topLevelKeys: hasObject(report) ? Object.keys(report) : []
   }
 }

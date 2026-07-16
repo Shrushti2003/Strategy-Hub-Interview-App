@@ -304,6 +304,10 @@ function normalizeStrategy(value = {}) {
   return strategy
 }
 
+function hasObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0
+}
+
 function validateSection(sectionName, rawValue) {
   switch (sectionName) {
     case "jobAnalysis":
@@ -339,9 +343,12 @@ function validateReport(rawReport, context = {}) {
   const atsAnalysis = validateSection("atsAnalysis", rawReport.atsAnalysis || {})
   const resumeSuggestions = validateSection("resumeSuggestions", rawReport.resumeSuggestions || [])
   const title = compact(rawReport.title || `${jobAnalysis.jobTitle || "Interview"} Strategy`)
+  const skillGaps = normalizeSkillGaps(rawReport.skillGaps)
 
   if (title.length < 3) errors.push("Report title is required.")
   if (!roadmap.length) errors.push("Roadmap/preparationPlan is required.")
+  if (!hasObject(atsAnalysis)) errors.push("atsAnalysis is required and must be a non-empty object.")
+  if (!skillGaps.length) errors.push("skillGaps is required and must contain at least one item.")
 
   let technicalQuestions = []
   let behavioralQuestions = []
@@ -385,7 +392,7 @@ function validateReport(rawReport, context = {}) {
     technicalQuestions,
     behavioralQuestions,
     resumeQuestions,
-    skillGaps: normalizeSkillGaps(rawReport.skillGaps),
+    skillGaps,
     strategy: normalizeStrategy(rawReport.strategy),
     roadmap,
     preparationPlan: roadmap,

@@ -260,8 +260,39 @@ function mergeReport({ context, jobSection, technicalQuestions, behavioralQuesti
   }
 }
 
+function hasObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0
+}
+
 function validateCoreReport(rawValue = {}) {
   const raw = rawValue?.jobAnalysis ? rawValue : { jobAnalysis: rawValue }
+  const skillGaps = validateSection("skillGaps", raw.skillGaps || [])
+  const atsAnalysis = validateSection("atsAnalysis", raw.atsAnalysis || {})
+  const errors = []
+
+  if (!skillGaps.length) {
+    errors.push("skillGaps must contain at least one gap supported by the candidate evidence and job description.")
+  }
+
+  if (!hasObject(atsAnalysis)) {
+    errors.push("atsAnalysis must be a non-empty object with ATS keyword findings.")
+  }
+
+  if (errors.length) {
+    throw new GenerationStepError({
+      step: "response-validator:core-report",
+      reason: `Core report validation failed: ${errors.join(" ")}`,
+      details: errors,
+      payload: {
+        errors,
+        atsAnalysisKeys: Object.keys(atsAnalysis),
+        skillGapsLength: skillGaps.length,
+        matchScore: raw.matchScore
+      },
+      statusCode: 422,
+      retryable: false
+    })
+  }
 
   return {
     title: raw.title || "",
@@ -269,9 +300,9 @@ function validateCoreReport(rawValue = {}) {
     company: raw.company || "",
     matchScore: raw.matchScore,
     jobAnalysis: validateSection("jobAnalysis", raw.jobAnalysis || {}),
-    skillGaps: validateSection("skillGaps", raw.skillGaps || []),
+    skillGaps,
     atsSection: {
-      atsAnalysis: validateSection("atsAnalysis", raw.atsAnalysis || {}),
+      atsAnalysis,
       resumeSuggestions: validateSection("resumeSuggestions", raw.resumeSuggestions || [])
     },
     strategy: validateSection("strategy", raw.strategy || {})
