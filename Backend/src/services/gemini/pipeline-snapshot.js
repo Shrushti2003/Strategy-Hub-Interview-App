@@ -21,15 +21,21 @@ function summarizeGeneratedPayload(value = {}) {
     ? report.atsAnalysis
     : {}
   const skillGaps = Array.isArray(report?.skillGaps) ? report.skillGaps : []
+  const technicalQuestions = Array.isArray(report?.technicalQuestions) ? report.technicalQuestions : []
+  const behavioralQuestions = Array.isArray(report?.behavioralQuestions) ? report.behavioralQuestions : []
+  const resumeQuestions = Array.isArray(report?.resumeQuestions) ? report.resumeQuestions : []
 
   return {
     payloadBytes: payloadSize(report),
-    technicalCount: Array.isArray(report?.technicalQuestions) ? report.technicalQuestions.length : 0,
-    behavioralCount: Array.isArray(report?.behavioralQuestions) ? report.behavioralQuestions.length : 0,
-    resumeCount: Array.isArray(report?.resumeQuestions) ? report.resumeQuestions.length : 0,
-    technicalQuestionsLength: Array.isArray(report?.technicalQuestions) ? report.technicalQuestions.length : 0,
-    behavioralQuestionsLength: Array.isArray(report?.behavioralQuestions) ? report.behavioralQuestions.length : 0,
-    resumeQuestionsLength: Array.isArray(report?.resumeQuestions) ? report.resumeQuestions.length : 0,
+    technicalQuestionsExists: Array.isArray(report?.technicalQuestions),
+    technicalCount: technicalQuestions.length,
+    technicalQuestionsLength: technicalQuestions.length,
+    behavioralQuestionsExists: Array.isArray(report?.behavioralQuestions),
+    behavioralCount: behavioralQuestions.length,
+    behavioralQuestionsLength: behavioralQuestions.length,
+    resumeQuestionsExists: Array.isArray(report?.resumeQuestions),
+    resumeCount: resumeQuestions.length,
+    resumeQuestionsLength: resumeQuestions.length,
     roadmapExists: roadmap.length > 0,
     roadmapCount: roadmap.length,
     strategyExists: hasObject(report?.strategy),

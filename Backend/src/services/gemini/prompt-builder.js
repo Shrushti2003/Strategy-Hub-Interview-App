@@ -142,7 +142,7 @@ For skillGaps, choose only gaps supported by the resume/self-description versus 
 function buildQuestionSetPrompt(context, jobAnalysis, feedback = "") {
   return `${baseInstruction("question set", { ...context, jobAnalysis })}
 Generate exactly 20 technicalQuestions, exactly 10 behavioralQuestions, and exactly 10 resumeQuestions.
-Return exactly: {"technicalQuestions":[],"behavioralQuestions":[],"resumeQuestions":[]}
+Return exactly one populated JSON object with 20 technicalQuestions, 10 behavioralQuestions, and 10 resumeQuestions. Do not return empty arrays.
 Technical questions must be specific to the role, skills, tools, and responsibilities.
 Technical follow-ups should deepen naturally from basics to implementation, metrics, debugging, scale, security, or tradeoffs.
 Behavioral questions must be specific to the role and seniority and include complete STAR answers.
