@@ -377,9 +377,16 @@ function publicReportSummary(report) {
 }
 
 function serializeJobError(error) {
+    const isQuotaError = Number(error?.statusCode || error?.status) === 429 ||
+        String(error?.payload?.googleError?.code || error?.googleError?.code || "").toUpperCase() === "RESOURCE_EXHAUSTED" ||
+        /quota|RESOURCE_EXHAUSTED|rate limit/i.test(String(error?.reason || error?.message || error?.details || ""))
+    const fallbackMessage = isQuotaError
+        ? "Gemini quota exceeded. Please try again later."
+        : "Interview generation failed."
+
     return {
-        message: sanitizeMessage(error?.message || "Interview generation failed."),
-        reason: sanitizeMessage(error?.reason || error?.message || "Interview generation failed."),
+        message: sanitizeMessage(isQuotaError ? fallbackMessage : (error?.message || fallbackMessage)),
+        reason: sanitizeMessage(isQuotaError ? fallbackMessage : (error?.reason || error?.message || fallbackMessage)),
         details: sanitizeMessage(error?.details || error?.stack || ""),
         step: sanitizeMessage(error?.step || "interview-generation"),
         timestamp: new Date()
@@ -406,9 +413,8 @@ function assertCompleteGeneratedReport(report = {}, stage = "generated-report") 
     if (!roadmap.length) errors.push("roadmap/preparationPlan is empty.")
     if (!nonEmptyObject(report.strategy)) errors.push("strategy is empty.")
     if (!nonEmptyObject(report.atsAnalysis)) errors.push("atsAnalysis is empty.")
-    if (!nonEmptyObject(report.resumeBuilder) && report.resumeBuilder?.status !== "unavailable") {
-        errors.push("resumeBuilder is empty.")
-    }
+    if (!nonEmptyObject(report.resumeBuilder) || report.resumeBuilder?.status === "unavailable") errors.push("resumeBuilder is empty.")
+    if (!Array.isArray(report.skillGaps) || report.skillGaps.length === 0) errors.push("skillGaps is empty.")
 
     const questionGroups = [
         ["technicalQuestions", technicalQuestions],
@@ -424,6 +430,8 @@ function assertCompleteGeneratedReport(report = {}, stage = "generated-report") 
             if (!Array.isArray(question?.followUps) || question.followUps.length === 0) errors.push(`${groupName}[${index}] is missing followUps.`)
             if (!Array.isArray(question?.bestPractices) || question.bestPractices.length === 0) errors.push(`${groupName}[${index}] is missing bestPractices.`)
             if (!Array.isArray(question?.evaluation) || question.evaluation.length === 0) errors.push(`${groupName}[${index}] is missing evaluation.`)
+            if (!Array.isArray(question?.recruiterTips) || question.recruiterTips.length === 0) errors.push(`${groupName}[${index}] is missing recruiterTips/coaching.`)
+            if (groupName === "behavioralQuestions" && !nonEmptyObject(question?.star)) errors.push(`${groupName}[${index}] is missing STAR answer.`)
         })
     }
 
@@ -735,12 +743,25 @@ async function processInterviewReportJob({
             hasStyleProfile: Boolean(resumeStyleProfile)
         })
 
-        await updateStage("generating-interview")
+        await updateStage("waiting-for-gemini")
         const interViewReportByAi = await timedGenerationStage("performance", "Interview report generation", () => generateInterviewReport({
             resume: resumeText,
             selfDescription: normalizedSelfDescription,
             jobDescription: normalizedJobDescription,
-            user
+            user,
+            onProgress: async (progress = {}) => {
+                const retryAttempt = Number(progress.retryAttempt || 0)
+                const maxRetries = Number(progress.maxRetries || 0)
+                await updateStage(`retrying-gemini-attempt-${retryAttempt}-of-${maxRetries}`, {
+                    retryAttempt,
+                    maxRetries,
+                    retryReason: progress.reason,
+                    backoffMs: progress.delayMs,
+                    geminiStage: progress.step,
+                    model: progress.model,
+                    quotaFailure: Boolean(progress.quotaFailure)
+                })
+            }
         }), {
             reportId: reportIdString,
             resumeChars: resumeText.length,
@@ -761,7 +782,7 @@ async function processInterviewReportJob({
             resumeQuestions: interViewReportByAi.resumeQuestions?.length || 0
         })
 
-        await updateStage("saving-report")
+        await updateStage("finalizing-report")
         const completedAt = Date.now()
         const completionPayload = {
             resume: resumeText,
@@ -1131,7 +1152,7 @@ async function getInterviewReportStatusController(req, res) {
         })
     }
 
-    const interviewReport = isDbConnected()
+    let interviewReport = isDbConnected()
         ? await interviewReportModel
             .findOne({ _id: reportId, user: req.user.id })
             .select("_id generationStatus generationStage generationError generationStartedAt generationCompletedAt generationFailedAt generationDurationMs generationWarnings updatedAt")
@@ -1148,7 +1169,9 @@ async function getInterviewReportStatusController(req, res) {
 
     if (status === "completed") {
         try {
-            assertCompleteGeneratedReport(report, "status-read")
+            interviewReport = await findInterviewReportRecord(reportId, req.user.id)
+            const completeReport = interviewReport?.toObject ? interviewReport.toObject() : interviewReport
+            assertCompleteGeneratedReport(completeReport, "status-read")
         } catch (error) {
             const generationError = serializeJobError(error)
             await updateInterviewReportRecord(reportId, req.user.id, {

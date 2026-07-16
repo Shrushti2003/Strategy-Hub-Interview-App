@@ -18,7 +18,10 @@ const REQUESTED_MODEL_CHAIN = [
 ]
 const ENDPOINT = "Google GenAI SDK models.generateContent"
 const DEFAULT_TIMEOUT_MS = 180000
-const RETRYABLE_HTTP_STATUSES = new Set([429, 500, 502, 503, 504])
+const DEFAULT_MAX_RETRIES = 4
+const RETRY_BACKOFF_MS = [2000, 5000, 10000, 20000]
+const RETRYABLE_HTTP_STATUSES = new Set([429, 503, 504])
+const RETRYABLE_NETWORK_CODES = new Set(["ECONNRESET", "ETIMEDOUT"])
 const RETRYABLE_GOOGLE_STATUSES = new Set([
   "RESOURCE_EXHAUSTED",
   "DEADLINE_EXCEEDED",
@@ -162,6 +165,7 @@ function extractGoogleError(error) {
     name: error?.name,
     httpStatus: error?.status || googleError?.code || null,
     code: googleError?.status || googleError?.code || null,
+    networkCode: error?.code || error?.cause?.code || "",
     message: googleError?.message || error?.message || "Gemini request failed.",
     details: googleError?.details || [],
     apiResponseBody,
@@ -171,7 +175,8 @@ function extractGoogleError(error) {
 
 function isRetryableGoogleError(googleError) {
   return RETRYABLE_HTTP_STATUSES.has(Number(googleError?.httpStatus)) ||
-    RETRYABLE_GOOGLE_STATUSES.has(String(googleError?.code || ""))
+    RETRYABLE_GOOGLE_STATUSES.has(String(googleError?.code || "")) ||
+    RETRYABLE_NETWORK_CODES.has(String(googleError?.networkCode || ""))
 }
 
 function shouldFallbackModel(googleError) {
@@ -215,7 +220,7 @@ function classifyGoogleError(googleError) {
 
   if (code === "RESOURCE_EXHAUSTED" || status === 429) {
     return {
-      reason: "Gemini quota exceeded. Try again later.",
+      reason: "Gemini quota exceeded. Please try again later.",
       statusCode: 429,
       retryable: true
     }
@@ -253,6 +258,14 @@ function classifyGoogleError(googleError) {
     }
   }
 
+  if (RETRYABLE_NETWORK_CODES.has(String(googleError?.networkCode || ""))) {
+    return {
+      reason: "Gemini network request failed. Please try again shortly.",
+      statusCode: 503,
+      retryable: true
+    }
+  }
+
   return {
     reason: googleError?.message || "Gemini request failed.",
     statusCode: status >= 400 ? 502 : 500,
@@ -264,42 +277,28 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function retryInfoDelayMs(googleError = {}) {
-  const retryInfo = (googleError.details || []).find((detail) =>
-    String(detail?.["@type"] || "").includes("google.rpc.RetryInfo")
-  )
-  const retryDelay = String(retryInfo?.retryDelay || "")
-  const seconds = Number(retryDelay.replace(/s$/i, ""))
-
-  if (!Number.isFinite(seconds) || seconds <= 0) {
-    return 0
-  }
-
-  return Math.min(Math.ceil(seconds * 1000), 65000)
-}
-
-function retryDelayMs(attempt, googleError = {}) {
-  const providerDelayMs = retryInfoDelayMs(googleError)
-  if (providerDelayMs) {
-    return providerDelayMs
-  }
-
-  const base = 750 * (2 ** attempt)
-  const jitter = Math.floor(Math.random() * 350)
-  return Math.min(base + jitter, 8000)
+function retryDelayMs(retryIndex) {
+  return RETRY_BACKOFF_MS[Math.min(retryIndex, RETRY_BACKOFF_MS.length - 1)]
 }
 
 async function verifyModel(model, timeoutMs = 12000) {
   const startedAt = Date.now()
 
   try {
-    const response = await client.models.generateContent({
+    const response = await callGeminiWithRetry({
+      step: "gemini-model-verification",
       model,
-      contents: "Return JSON: {\"ok\":true}",
-      config: {
-        responseMimeType: "application/json",
-        httpOptions: {
-          timeout: timeoutMs
+      timeoutMs,
+      maxRetries: 1,
+      requestId: `verify_${model}`,
+      requestPayload: {
+        model,
+        contents: "Return JSON: {\"ok\":true}",
+        config: {
+          responseMimeType: "application/json",
+          httpOptions: {
+            timeout: timeoutMs
+          }
         }
       }
     })
@@ -382,10 +381,13 @@ async function resolveModelConfig({ requestId = "", force = false } = {}) {
   return resolvedModelConfig
 }
 
-async function callGenerateContent({ requestPayload, step, model, timeoutMs, maxRetries, requestId = "" }) {
+async function callGeminiWithRetry({ requestPayload, step, model, timeoutMs, maxRetries = DEFAULT_MAX_RETRIES, requestId = "", onRetry }) {
   const startedAt = Date.now()
+  const promptSize = String(requestPayload?.contents || "").length
+  const totalRetryAttempts = Math.max(0, maxRetries)
+  const maxAttempts = totalRetryAttempts + 1
 
-  for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     const attemptStartedAt = Date.now()
 
     try {
@@ -394,13 +396,14 @@ async function callGenerateContent({ requestPayload, step, model, timeoutMs, max
         endpoint: ENDPOINT,
         requestId,
         attempt: attempt + 1,
-        maxAttempts: maxRetries + 1,
+        maxAttempts,
         timeoutMs,
-        requestPayload
+        promptSize
       })
 
       const response = await client.models.generateContent(requestPayload)
       const elapsedMs = Date.now() - attemptStartedAt
+      const responseText = String(response.text || "")
 
       logStep(step, "Gemini response received", {
         model,
@@ -410,9 +413,12 @@ async function callGenerateContent({ requestPayload, step, model, timeoutMs, max
         elapsedMs,
         httpStatus: response.sdkHttpResponse?.status,
         tokenUsage: response.usageMetadata,
-        responseBody: response,
-        responseChars: String(response.text || "").length,
-        hasText: Boolean(String(response.text || "").trim())
+        finishReason: response.candidates?.[0]?.finishReason || "",
+        promptSize,
+        responseSize: responseText.length,
+        responseChars: responseText.length,
+        hasText: Boolean(responseText.trim()),
+        finalStatus: "success"
       })
 
       return response
@@ -421,7 +427,7 @@ async function callGenerateContent({ requestPayload, step, model, timeoutMs, max
       const classification = classifyGoogleError(googleError)
       const elapsedMs = Date.now() - attemptStartedAt
       const quotaExhausted = isQuotaGoogleError(googleError)
-      const canRetry = !quotaExhausted && isRetryableGoogleError(googleError) && attempt < maxRetries
+      const canRetry = classification.retryable && isRetryableGoogleError(googleError) && attempt < maxAttempts - 1
 
       logFailure(step, error, {
         model,
@@ -430,6 +436,8 @@ async function callGenerateContent({ requestPayload, step, model, timeoutMs, max
         attempt: attempt + 1,
         elapsedMs,
         googleError,
+        promptSize,
+        quotaFailure: quotaExhausted,
         retryable: canRetry
       })
 
@@ -444,7 +452,9 @@ async function callGenerateContent({ requestPayload, step, model, timeoutMs, max
             requestId,
             attempt: attempt + 1,
             elapsedMs: Date.now() - startedAt,
-            googleError
+            googleError,
+            promptSize,
+            finalStatus: "failed"
           },
           statusCode: classification.statusCode,
           retryable: classification.retryable,
@@ -455,23 +465,43 @@ async function callGenerateContent({ requestPayload, step, model, timeoutMs, max
         throw wrapped
       }
 
-      const delayMs = retryDelayMs(attempt, googleError)
+      const retryAttempt = attempt + 1
+      const delayMs = retryDelayMs(attempt)
       logStep(step, "Retrying Gemini request after backoff", {
         model,
         endpoint: ENDPOINT,
         requestId,
-        attempt: attempt + 1,
+        retryAttempt,
+        maxRetries: totalRetryAttempts,
+        nextAttempt: attempt + 2,
         delayMs,
         elapsedMs,
         googleStatus: googleError.code,
-        httpStatus: googleError.httpStatus
+        httpStatus: googleError.httpStatus,
+        networkCode: googleError.networkCode,
+        retryReason: classification.reason,
+        quotaFailure: quotaExhausted
+      })
+      await onRetry?.({
+        step,
+        model,
+        requestId,
+        retryAttempt,
+        maxRetries: totalRetryAttempts,
+        nextAttempt: attempt + 2,
+        delayMs,
+        reason: classification.reason,
+        httpStatus: googleError.httpStatus,
+        googleStatus: googleError.code,
+        networkCode: googleError.networkCode,
+        quotaFailure: quotaExhausted
       })
       await sleep(delayMs)
     }
   }
 }
 
-async function generateJson({ prompt, step, timeoutMs = DEFAULT_TIMEOUT_MS, maxRetries = 2, requestId = "" }) {
+async function generateJson({ prompt, step, timeoutMs = DEFAULT_TIMEOUT_MS, maxRetries = DEFAULT_MAX_RETRIES, requestId = "", onRetry }) {
   const effectiveRequestId = requestId || `adhoc_${Date.now()}_${Math.random().toString(16).slice(2)}`
 
   if (!client) {
@@ -550,13 +580,14 @@ async function generateJson({ prompt, step, timeoutMs = DEFAULT_TIMEOUT_MS, maxR
     })
 
     try {
-      const response = await callGenerateContent({
+      const response = await callGeminiWithRetry({
         requestPayload,
         step,
         model,
         timeoutMs,
         maxRetries,
-        requestId: effectiveRequestId
+        requestId: effectiveRequestId,
+        onRetry
       })
 
       markModelSuccessfulForRequest({ requestId: effectiveRequestId, model, step })
@@ -666,28 +697,46 @@ async function streamText({ prompt, step, timeoutMs = DEFAULT_TIMEOUT_MS, reques
 
   for (const model of scopedModelChain) {
     try {
-      const stream = await client.models.generateContentStream({
+      const response = await callGeminiWithRetry({
+        step,
         model,
-        contents: String(prompt || ""),
-        config: {
-          httpOptions: {
-            timeout: timeoutMs
+        timeoutMs,
+        requestId: effectiveRequestId,
+        requestPayload: {
+          model,
+          contents: String(prompt || ""),
+          config: {
+            httpOptions: {
+              timeout: timeoutMs
+            }
           }
         }
       })
 
-      let fullText = ""
-
-      for await (const chunk of stream) {
-        const text = String(chunk?.text || "")
-        if (!text) continue
-        fullText += text
-        onChunk?.(text)
-      }
+      const fullText = String(response.text || "")
+      if (fullText) onChunk?.(fullText)
 
       markModelSuccessfulForRequest({ requestId: effectiveRequestId, model, step })
       return fullText
     } catch (error) {
+      if (error instanceof GenerationStepError) {
+        lastError = error
+
+        if (error.shouldFallbackModel) {
+          if (error.quotaExhausted) {
+            markModelUnavailableForRequest({
+              requestId: effectiveRequestId,
+              model,
+              step,
+              googleError: error.payload?.googleError || error.googleError || {}
+            })
+          }
+          continue
+        }
+
+        throw error
+      }
+
       const googleError = extractGoogleError(error)
       const classification = classifyGoogleError(googleError)
       const quotaExhausted = isQuotaGoogleError(googleError)
@@ -743,12 +792,14 @@ async function streamText({ prompt, step, timeoutMs = DEFAULT_TIMEOUT_MS, reques
 
 module.exports = {
   generateJson,
+  callGeminiWithRetry,
   streamText,
   hasApiKey,
   MODEL,
   MODEL_CHAIN: REQUESTED_MODEL_CHAIN,
   CANDIDATE_MODELS,
   DEFAULT_TIMEOUT_MS,
+  DEFAULT_MAX_RETRIES,
   ENDPOINT,
   extractGoogleError,
   classifyGoogleError,

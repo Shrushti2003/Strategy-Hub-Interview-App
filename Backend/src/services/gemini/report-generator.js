@@ -84,22 +84,6 @@ function pick(raw, key) {
   return raw
 }
 
-function isQuotaError(error) {
-  return Number(error?.statusCode || error?.status) === 429 ||
-    String(error?.payload?.googleError?.code || error?.googleError?.code || "").toUpperCase() === "RESOURCE_EXHAUSTED" ||
-    /quota|RESOURCE_EXHAUSTED/i.test(String(error?.reason || error?.message || error?.details || ""))
-}
-
-function warningFromError(stage, error) {
-  return {
-    stage,
-    reason: error?.reason || error?.message || `${stage} unavailable.`,
-    statusCode: error?.statusCode || error?.status || (isQuotaError(error) ? 429 : 502),
-    retryable: error?.retryable !== false,
-    quota: isQuotaError(error)
-  }
-}
-
 async function runStageQueue(tasks, { requestId, concurrency = stageConcurrency() } = {}) {
   const results = {}
   const entries = Object.entries(tasks)
@@ -141,9 +125,10 @@ async function generateStage({
   promptBuilder,
   validate,
   timeoutMs = 90000,
-  providerRetries = 2,
+  providerRetries = 4,
   validationAttempts = 2,
-  totalStartedAt = Date.now()
+  totalStartedAt = Date.now(),
+  onProgress
 }) {
   let feedback = ""
   let lastError = null
@@ -178,7 +163,8 @@ async function generateStage({
         step: stage,
         timeoutMs,
         maxRetries: providerRetries,
-        requestId
+        requestId,
+        onRetry: onProgress
       })
       const value = validate(pick(raw, sectionKey))
       const outputJson = JSON.stringify(value || {})
@@ -291,11 +277,7 @@ function validateQuestionSet(rawValue = {}) {
   }
 }
 
-function validateRoadmapOnly(rawValue = {}) {
-  return validateSection("roadmap", rawValue?.roadmap || rawValue || [])
-}
-
-async function generateInterviewReport({ resume = "", selfDescription = "", jobDescription = "", user = {} }) {
+async function generateInterviewReport({ resume = "", selfDescription = "", jobDescription = "", user = {}, onProgress }) {
   const totalStartedAt = Date.now()
   const requestId = createRequestId()
   const contextStartedAt = profileStageStart(requestId, "Candidate Context", totalStartedAt)
@@ -332,6 +314,7 @@ async function generateInterviewReport({ resume = "", selfDescription = "", jobD
     timeoutMs: 120000,
     promptBuilder: (feedback) => buildCoreReportPrompt(context, feedback),
     validate: validateCoreReport,
+    onProgress,
     totalStartedAt
   })
   profileStageEnd(requestId, "Core Report", coreStartedAt, totalStartedAt, "SUCCESS")
@@ -344,60 +327,24 @@ async function generateInterviewReport({ resume = "", selfDescription = "", jobD
       timeoutMs: 180000,
       promptBuilder: (feedback) => buildQuestionSetPrompt(context, core.jobAnalysis, feedback),
       validate: validateQuestionSet,
+      onProgress,
       totalStartedAt
     }),
-    roadmapAndResume: async () => {
-      try {
-        return {
-          ...await generateStage({
-            requestId,
-            stage: "roadmap-resume-builder",
-            sectionKey: null,
-            timeoutMs: 120000,
-            promptBuilder: (feedback) => buildRoadmapAndResumePrompt(context, core.jobAnalysis, core.strategy, core.atsSection.atsAnalysis, true, feedback),
-            validate: validateRoadmapAndResume,
-            totalStartedAt
-          }),
-          generationWarnings: []
-        }
-      } catch (error) {
-        const statusCode = Number(error?.statusCode || error?.status || 0)
-        const canDegradeResumeBuilder = isQuotaError(error) || statusCode === 502 || statusCode === 503
-        if (!canDegradeResumeBuilder) {
-          throw error
-        }
-
-        const warning = warningFromError("resume-builder", error)
-        logFailure("resume-builder", error, { requestId, partialSuccess: true })
-
-        const roadmap = await generateStage({
-          requestId,
-          stage: "roadmap",
-          sectionKey: "roadmap",
-          timeoutMs: 120000,
-          promptBuilder: (feedback) => buildRoadmapAndResumePrompt(context, core.jobAnalysis, core.strategy, core.atsSection.atsAnalysis, false, feedback),
-          validate: validateRoadmapOnly,
-          totalStartedAt
-        })
-
-        return {
-          roadmap,
-          resumeBuilder: {
-            status: "unavailable",
-            reason: warning.reason,
-            retryable: true
-          },
-          generationWarnings: [warning]
-        }
-      }
-    }
+    roadmapAndResume: () => generateStage({
+      requestId,
+      stage: "roadmap-resume-builder",
+      sectionKey: null,
+      timeoutMs: 120000,
+      promptBuilder: (feedback) => buildRoadmapAndResumePrompt(context, core.jobAnalysis, core.strategy, core.atsSection.atsAnalysis, true, feedback),
+      validate: validateRoadmapAndResume,
+      onProgress,
+      totalStartedAt
+    })
   }, { requestId, concurrency: stageConcurrency() })
 
   const roadmap = queued.roadmapAndResume.roadmap
   let resumeBuilder = queued.roadmapAndResume.resumeBuilder
-  const generationWarnings = Array.isArray(queued.roadmapAndResume.generationWarnings)
-    ? queued.roadmapAndResume.generationWarnings
-    : []
+  const generationWarnings = []
 
   const mergeStartedAt = profileStageStart(requestId, "Merge And Validate Report", totalStartedAt)
   const merged = mergeReport({

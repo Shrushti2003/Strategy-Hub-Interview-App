@@ -198,13 +198,7 @@ export default function AiGenerationFlow() {
         setIsGenerating(false);
         setProcessingJob(null);
         await loadReports();
-        if (Array.isArray(statusData.generationWarnings) && statusData.generationWarnings.length) {
-          toast.success(
-            "Interview generated. Resume Builder may be temporarily unavailable due to Gemini quota."
-          );
-        } else {
-          toast.success("Interview strategy generated.");
-        }
+        toast.success("Generation completed.");
         router.push(`/dashboard/interview/${reportId}`);
         return;
       }
@@ -545,7 +539,31 @@ function formatFileSize(size) {
 }
 
 function formatStage(value = "") {
-  const label = String(value || "processing")
+  const rawValue = String(value || "processing");
+  const retryMatch = rawValue.match(/^retrying-gemini-attempt-(\d+)-of-(\d+)$/i);
+
+  if (retryMatch) {
+    return `Retrying Gemini... Attempt ${retryMatch[1]} of ${retryMatch[2]}`;
+  }
+
+  const stageLabels = {
+    queued: "Waiting for Gemini...",
+    processing: "Waiting for Gemini...",
+    "extracting-files": "Reading uploaded files...",
+    "analyzing-resume-style": "Analyzing resume style...",
+    "waiting-for-gemini": "Waiting for Gemini...",
+    "generating-interview": "Waiting for Gemini...",
+    "finalizing-report": "Finalizing report...",
+    "saving-report": "Finalizing report...",
+    completed: "Generation completed",
+    failed: "Generation failed",
+  };
+
+  if (stageLabels[rawValue]) {
+    return stageLabels[rawValue];
+  }
+
+  const label = rawValue
     .replace(/[-_]+/g, " ")
     .trim();
 
