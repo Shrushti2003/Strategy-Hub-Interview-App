@@ -343,10 +343,16 @@ async function updateInterviewReportRecord(reportId, userId, updates) {
     return isDbConnected()
         ? interviewReportModel.findOneAndUpdate(
             { _id: reportId, user: userId },
-            updates,
-            { new: true }
+            { $set: updates },
+            { new: true, runValidators: true }
         )
         : localStore.updateInterviewReport(String(reportId), String(userId), updates)
+}
+
+async function findInterviewReportRecord(reportId, userId) {
+    return isDbConnected()
+        ? interviewReportModel.findOne({ _id: reportId, user: userId })
+        : localStore.findInterviewReportById(String(reportId), String(userId))
 }
 
 function publicReportSummary(report) {
@@ -377,6 +383,69 @@ function serializeJobError(error) {
         details: sanitizeMessage(error?.details || error?.stack || ""),
         step: sanitizeMessage(error?.step || "interview-generation"),
         timestamp: new Date()
+    }
+}
+
+function nonEmptyObject(value) {
+    return value && typeof value === "object" && !Array.isArray(value) && Object.keys(value).length > 0
+}
+
+function assertCompleteGeneratedReport(report = {}, stage = "generated-report") {
+    const errors = []
+    const technicalQuestions = Array.isArray(report.technicalQuestions) ? report.technicalQuestions : []
+    const behavioralQuestions = Array.isArray(report.behavioralQuestions) ? report.behavioralQuestions : []
+    const resumeQuestions = Array.isArray(report.resumeQuestions) ? report.resumeQuestions : []
+    const roadmap = Array.isArray(report.roadmap || report.preparationPlan)
+        ? report.roadmap || report.preparationPlan
+        : []
+
+    if (Number(report.matchScore || 0) <= 0) errors.push("matchScore must be greater than 0.")
+    if (technicalQuestions.length < 20) errors.push(`technicalQuestions requires 20 items; received ${technicalQuestions.length}.`)
+    if (behavioralQuestions.length < 10) errors.push(`behavioralQuestions requires 10 items; received ${behavioralQuestions.length}.`)
+    if (resumeQuestions.length < 10) errors.push(`resumeQuestions requires 10 items; received ${resumeQuestions.length}.`)
+    if (!roadmap.length) errors.push("roadmap/preparationPlan is empty.")
+    if (!nonEmptyObject(report.strategy)) errors.push("strategy is empty.")
+    if (!nonEmptyObject(report.atsAnalysis)) errors.push("atsAnalysis is empty.")
+    if (!nonEmptyObject(report.resumeBuilder) && report.resumeBuilder?.status !== "unavailable") {
+        errors.push("resumeBuilder is empty.")
+    }
+
+    const questionGroups = [
+        ["technicalQuestions", technicalQuestions],
+        ["behavioralQuestions", behavioralQuestions],
+        ["resumeQuestions", resumeQuestions]
+    ]
+
+    for (const [groupName, questions] of questionGroups) {
+        questions.forEach((question, index) => {
+            if (!String(question?.question || "").trim()) errors.push(`${groupName}[${index}] is missing question.`)
+            if (!String(question?.answer || question?.detailedAnswer || "").trim()) errors.push(`${groupName}[${index}] is missing answer.`)
+            if (!String(question?.whyInterviewerAsks || question?.intention || "").trim()) errors.push(`${groupName}[${index}] is missing whyInterviewerAsks/intention.`)
+            if (!Array.isArray(question?.followUps) || question.followUps.length === 0) errors.push(`${groupName}[${index}] is missing followUps.`)
+            if (!Array.isArray(question?.bestPractices) || question.bestPractices.length === 0) errors.push(`${groupName}[${index}] is missing bestPractices.`)
+            if (!Array.isArray(question?.evaluation) || question.evaluation.length === 0) errors.push(`${groupName}[${index}] is missing evaluation.`)
+        })
+    }
+
+    if (errors.length) {
+        throw new GenerationStepError({
+            step: `completion-validation:${stage}`,
+            reason: "Generated interview report is incomplete and was not marked completed.",
+            details: errors.join("\n"),
+            payload: {
+                errors,
+                matchScore: report.matchScore,
+                technicalQuestions: technicalQuestions.length,
+                behavioralQuestions: behavioralQuestions.length,
+                resumeQuestions: resumeQuestions.length,
+                roadmapDays: roadmap.length,
+                hasStrategy: nonEmptyObject(report.strategy),
+                hasAtsAnalysis: nonEmptyObject(report.atsAnalysis),
+                hasResumeBuilder: nonEmptyObject(report.resumeBuilder)
+            },
+            statusCode: 422,
+            retryable: false
+        })
     }
 }
 
@@ -682,6 +751,8 @@ async function processInterviewReportJob({
             ? interViewReportByAi.generationWarnings
             : []
 
+        assertCompleteGeneratedReport(interViewReportByAi, "before-save")
+
         logGenerationStep("service", "AI report generated", {
             reportId: reportIdString,
             title: interViewReportByAi.title,
@@ -692,7 +763,7 @@ async function processInterviewReportJob({
 
         await updateStage("saving-report")
         const completedAt = Date.now()
-        const updatedReport = await timedGenerationStage("performance", "Mongo completion update", () => updateInterviewReportRecord(reportId, userId, {
+        const completionPayload = {
             resume: resumeText,
             styleResumeText,
             resumeStyleProfile,
@@ -707,15 +778,35 @@ async function processInterviewReportJob({
             generationCompletedAt: new Date(completedAt),
             generationDurationMs: completedAt - jobStartedAt,
             generationWarnings
-        }), {
+        }
+        const updatedReport = await timedGenerationStage("performance", "Mongo completion update", () => updateInterviewReportRecord(reportId, userId, completionPayload), {
             reportId: reportIdString,
             dbConnected: isDbConnected(),
             userId
         })
 
+        if (!updatedReport) {
+            throw new GenerationStepError({
+                step: "database:completion-update",
+                reason: "Could not update the generated interview report.",
+                statusCode: 500,
+                retryable: false,
+                payload: { reportId: reportIdString, userId }
+            })
+        }
+
+        const savedReport = await timedGenerationStage("performance", "Mongo completion verification", () => findInterviewReportRecord(reportId, userId), {
+            reportId: reportIdString,
+            dbConnected: isDbConnected(),
+            userId
+        })
+        const savedReportValue = savedReport?.toObject ? savedReport.toObject() : savedReport
+
+        assertCompleteGeneratedReport(savedReportValue, "after-save")
+
         logGenerationStep("background-job", "Job completed", {
             reportId: reportIdString,
-            status: updatedReport?.generationStatus || "completed",
+            status: savedReportValue?.generationStatus || "completed",
             totalRuntimeMs: Date.now() - totalStartedAt,
             backgroundRuntimeMs: Date.now() - jobStartedAt,
             warnings: generationWarnings.length
@@ -995,6 +1086,33 @@ async function getInterviewReportByIdController(req, res) {
         })
     }
 
+    const reportValue = interviewReport.toObject ? interviewReport.toObject() : interviewReport
+
+    if ((reportValue.generationStatus || "completed") === "completed") {
+        try {
+            assertCompleteGeneratedReport(reportValue, "report-read")
+        } catch (error) {
+            const generationError = serializeJobError(error)
+            const failedReport = await updateInterviewReportRecord(interviewId, req.user.id, {
+                generationStatus: "failed",
+                generationStage: generationError.step,
+                generationError,
+                generationFailedAt: new Date()
+            })
+
+            return res.status(200).json({
+                message: "Interview report fetched successfully.",
+                interviewReport: failedReport || {
+                    ...reportValue,
+                    generationStatus: "failed",
+                    generationStage: generationError.step,
+                    generationError,
+                    generationFailedAt: generationError.timestamp
+                }
+            })
+        }
+    }
+
     res.status(200).json({
         message: "Interview report fetched successfully.",
         interviewReport
@@ -1026,7 +1144,26 @@ async function getInterviewReportStatusController(req, res) {
     }
 
     const report = interviewReport.toObject ? interviewReport.toObject() : interviewReport
-    const status = report.generationStatus || "completed"
+    let status = report.generationStatus || "completed"
+
+    if (status === "completed") {
+        try {
+            assertCompleteGeneratedReport(report, "status-read")
+        } catch (error) {
+            const generationError = serializeJobError(error)
+            await updateInterviewReportRecord(reportId, req.user.id, {
+                generationStatus: "failed",
+                generationStage: generationError.step,
+                generationError,
+                generationFailedAt: new Date()
+            })
+            status = "failed"
+            report.generationStatus = "failed"
+            report.generationStage = generationError.step
+            report.generationError = generationError
+            report.generationFailedAt = generationError.timestamp
+        }
+    }
 
     const payload = {
         reportId: report._id,

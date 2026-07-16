@@ -152,9 +152,27 @@ function normalizeQuestion(question = {}, index = 0, label = "Question") {
   const skills = stringArray(question.relevantSkills || question.skillsBeingEvaluated || question.evaluatedSkills)
 
   return {
+    ...question,
     question: asString(question.question),
     answer,
+    detailedAnswer: firstString(question.detailedAnswer, question.answer, answer),
+    expectedAnswer: asString(question.expectedAnswer),
+    sampleAnswer: asString(question.sampleAnswer),
+    modelAnswer: asString(question.modelAnswer),
+    idealAnswer,
+    excellentAnswer: asString(question.excellentAnswer),
+    goodAnswer,
+    weakAnswer,
     explanation,
+    detailedExplanation: firstString(question.detailedExplanation, question.explanation),
+    framework,
+    answerFramework: firstString(question.answerFramework, framework),
+    recommendedAnswerFramework: firstString(question.recommendedAnswerFramework, framework),
+    duration,
+    suggestedDuration: firstString(question.suggestedDuration, duration),
+    expectedAnswerDuration: firstString(question.expectedAnswerDuration, duration),
+    importantKeywords: keywords,
+    keywords,
     whyInterviewerAsks: why,
     intention: asString(question.intention || why),
     evaluation: [
@@ -167,10 +185,13 @@ function normalizeQuestion(question = {}, index = 0, label = "Question") {
       ...stringArray(question.bestPractices || question.answerStructure || question.recommendedAnswerStructure),
       ...labeledList("Excellent checklist", excellentChecklist)
     ],
+    excellentAnswerChecklist: excellentChecklist,
+    checklist: stringArray(question.checklist || excellentChecklist),
     commonMistakes: [
       ...stringArray(question.commonMistakes),
       ...labeledList("Red flag", redFlags)
     ],
+    redFlags,
     recruiterTips: [
       ...labeledList("Ideal answer", idealAnswer),
       ...labeledList("Good answer", goodAnswer),
@@ -179,9 +200,14 @@ function normalizeQuestion(question = {}, index = 0, label = "Question") {
       ...labeledList("Duration", duration),
       ...stringArray(question.recruiterTips || question.coachingTips)
     ],
+    coachingTips: stringArray(question.coachingTips || question.recruiterTips),
     followUps: stringArray(question.followUps),
     relevantSkills: skills,
+    skillsBeingEvaluated: stringArray(question.skillsBeingEvaluated || skills),
+    evaluatedSkills: stringArray(question.evaluatedSkills || skills),
     category: asString(question.category || label),
+    expectedSpeakingTone: asString(question.expectedSpeakingTone || question.speakingTone),
+    speakingTone: asString(question.speakingTone || question.expectedSpeakingTone),
     star: {
       situation: asString(star.situation),
       task: asString(star.task),

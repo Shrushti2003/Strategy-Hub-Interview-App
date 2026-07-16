@@ -31,6 +31,7 @@ Return exactly one valid JSON object. No markdown, prose, code fences, comments,
 Use only the supplied candidate evidence, candidate analysis, user profile, and job description. Do not invent employers, degrees, dates, certifications, contact details, or work history.
 If evidence is missing, make the content conditional on the available evidence instead of fabricating facts.
 Write like a senior hiring manager and interview coach. Keep every item concise, concrete, role-specific, and grounded in the supplied job description and candidate context.
+Preserve depth and coaching quality. Do not replace detailed model answers, STAR coaching, evaluation criteria, recruiter tips, or follow-up coaching with placeholders or generic short notes.
 Context:${compactJson(compactPromptContext(context))}
 ${extra}`.trim()
 }
@@ -56,14 +57,15 @@ function questionCoachingInstruction(type) {
   return `For every ${type} question, use the existing fields as coaching fields:
 - whyInterviewerAsks: one short reason interviewers ask it.
 - relevantSkills: 3 to 6 evaluated skills or competencies.
-- explanation: include "Framework: ... | Duration: ... | Keywords: ..." in one concise line.
+- answer: a complete, interview-ready model answer with enough detail to coach the candidate.
+- detailedAnswer: preserve a richer version of the model answer when useful.
+- explanation: include "Framework: ... | Duration: ... | Keywords: ..." and any role-specific reasoning.
 - bestPractices: include answer framework steps and an excellent answer checklist.
 - commonMistakes: include common mistakes and red flags.
-- recruiterTips: include ideal answer, good answer, weak answer, and coaching tips as short labeled bullets.
+- recruiterTips: include ideal answer, good answer, weak answer, tone, duration, and coaching tips as labeled bullets.
 - evaluation: include how the answer will be scored.
 - followUps: 2 to 5 realistic follow-up questions that stay on-topic and deepen naturally.
-Keep answers concise. Avoid essays.
-Hard size limits per item: answer 45-90 words, explanation 25 words max, whyInterviewerAsks 20 words max, evaluation 3 bullets max, bestPractices 4 bullets max, commonMistakes 3 bullets max, recruiterTips 4 bullets max, followUps 2 questions max, relevantSkills 5 items max.`
+Do not shorten coaching by omitting fields. Prefer complete, useful interview coaching over terse answers.`
 }
 
 function buildTechnicalQuestionsPrompt(context, jobAnalysis, feedback = "") {
@@ -146,7 +148,6 @@ Resume questions must reference visible candidate/job evidence from resume, self
 ${questionShape()}
 Behavioral items additionally need "star":{"situation":"","task":"","action":"","result":""}.
 For STAR fields, use one sentence per field.
-Keep the whole question-set JSON under 45000 characters while preserving every required field and all question counts.
 ${questionCoachingInstruction("technical, behavioral, and resume")}
 ${validationHint(feedback)}`
 }
