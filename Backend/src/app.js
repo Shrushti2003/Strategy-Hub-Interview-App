@@ -6,22 +6,15 @@ const resumeExportRouter = require("./routes/resume-export-routes")
 const cors = require("cors")
 const { env, sanitizeMessage } = require("./config/env")
 const { geminiHealth } = require("./services/gemini/connectivity-audit")
+const { createOriginPolicy } = require("./config/origin-policy")
 
 
 const app = express()
-const allowedOrigins = new Set([
-  "https://strategy-hub-interview-app.vercel.app",
+const originPolicy = createOriginPolicy(env)
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"])
+const rateLimitBuckets = new Map()
 
-  env.FRONTEND_URL,
-  env.NEXT_PUBLIC_APP_URL,
-
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-  "http://localhost:3001",
-  "http://127.0.0.1:3001"
-].filter(Boolean))
-
-console.log("Allowed Origins:", [...allowedOrigins]);
+console.log("Allowed origin policy:", originPolicy.describe())
 
 function getRequestOrigin(req) {
   const origin = req.get("origin")
@@ -38,12 +31,13 @@ function getRequestOrigin(req) {
 }
 
 function enforceTrustedOrigin(req, res, next) {
-  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
+  if (SAFE_METHODS.has(req.method)) {
     return next()
   }
 
   const origin = getRequestOrigin(req)
-  if (origin && !allowedOrigins.has(origin)) {
+
+  if (origin && !originPolicy.isAllowedOrigin(origin)) {
     return res.status(403).json({
       message: "Request origin is not allowed"
     })
@@ -52,6 +46,36 @@ function enforceTrustedOrigin(req, res, next) {
   return next()
 }
 
+function rateLimiter({ windowMs = 15 * 60 * 1000, max = 600 } = {}) {
+  return (req, res, next) => {
+    const forwardedFor = String(req.headers["x-forwarded-for"] || "")
+    const ip = forwardedFor.split(",")[0].trim() || req.ip || req.socket?.remoteAddress || "unknown"
+    const key = `${ip}:${Math.floor(Date.now() / windowMs)}`
+    const count = (rateLimitBuckets.get(key) || 0) + 1
+
+    rateLimitBuckets.set(key, count)
+
+    if (rateLimitBuckets.size > 10000) {
+      const currentWindow = Math.floor(Date.now() / windowMs)
+      for (const bucketKey of rateLimitBuckets.keys()) {
+        if (!bucketKey.endsWith(`:${currentWindow}`)) {
+          rateLimitBuckets.delete(bucketKey)
+        }
+      }
+    }
+
+    if (count > max) {
+      res.setHeader("Retry-After", Math.ceil(windowMs / 1000))
+      return res.status(429).json({
+        message: "Too many requests. Please try again shortly."
+      })
+    }
+
+    return next()
+  }
+}
+
+app.set("trust proxy", 1)
 app.use(express.json({ limit: "8mb" }))
 app.use(cookieParser())
 app.disable("x-powered-by")
@@ -63,7 +87,7 @@ app.use((req, res, next) => {
 })
 app.use(cors({
   origin(origin, callback) {
-    if (!origin || allowedOrigins.has(origin)) {
+    if (!origin || originPolicy.isAllowedOrigin(origin)) {
       return callback(null, true)
     }
 
@@ -74,6 +98,7 @@ app.use(cors({
   credentials: true
 }))
 app.use(enforceTrustedOrigin)
+app.use(rateLimiter())
 
 app.get("/", (req, res) => {
   res.status(200).json({

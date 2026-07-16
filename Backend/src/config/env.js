@@ -92,6 +92,8 @@ function validateEnv() {
     GEMINI_MODEL: readEnv("GEMINI_MODEL"),
     FRONTEND_URL: readEnv("FRONTEND_URL"),
     NEXT_PUBLIC_APP_URL: readEnv("NEXT_PUBLIC_APP_URL"),
+    ALLOWED_ORIGINS: readEnv("ALLOWED_ORIGINS"),
+    VERCEL_ALLOWED_PROJECTS: readEnv("VERCEL_ALLOWED_PROJECTS"),
     SMTP_HOST: readEnv("SMTP_HOST") || "smtp.gmail.com",
     SMTP_PORT: Number(readEnv("SMTP_PORT") || 465),
     SMTP_SECURE: String(readEnv("SMTP_SECURE") || "true") === "true",
