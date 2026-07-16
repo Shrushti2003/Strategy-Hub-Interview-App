@@ -53,6 +53,25 @@ const preparationDaySchema = new mongoose.Schema(
 const interviewReportSchema = new mongoose.Schema(
   {
     title: { type: String, required: true },
+    generationStatus: {
+      type: String,
+      enum: ["processing", "completed", "failed"],
+      default: "completed",
+      index: true
+    },
+    generationStage: { type: String, default: "" },
+    generationError: {
+      message: { type: String, default: "" },
+      reason: { type: String, default: "" },
+      details: { type: String, default: "" },
+      step: { type: String, default: "" },
+      timestamp: { type: Date }
+    },
+    generationStartedAt: { type: Date },
+    generationCompletedAt: { type: Date },
+    generationFailedAt: { type: Date },
+    generationDurationMs: { type: Number, default: 0 },
+    generationWarnings: [{ type: Object }],
     jobTitle: { type: String, default: "" },
     company: { type: String, default: "" },
     user: {
@@ -67,7 +86,7 @@ const interviewReportSchema = new mongoose.Schema(
     styleResumeText: { type: String, default: "" },
     resumeStyleProfile: { type: Object, default: {} },
     atsResumeData: { type: Object, default: {} },
-    matchScore: { type: Number, required: true },
+    matchScore: { type: Number, required: true, default: 0 },
     technicalQuestions: [questionSchema],
     behavioralQuestions: [questionSchema],
     resumeQuestions: [questionSchema],

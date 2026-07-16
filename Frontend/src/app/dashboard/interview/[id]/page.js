@@ -349,6 +349,49 @@ export default function InterviewPlanPage() {
     );
   }
 
+  if (report.generationStatus === "processing") {
+    return (
+      <div className="mx-auto max-w-xl rounded-xl border border-border bg-card/90 p-8 text-center">
+        <Loader2 className="mx-auto mb-4 size-8 animate-spin text-fuchsia-300" />
+        <p className="text-lg font-semibold text-white">Interview generation is still running.</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          Current stage: {labelize(String(report.generationStage || "processing").replace(/[-_]+/g, " "))}
+        </p>
+        <div className="mt-5 flex justify-center gap-3">
+          <Button variant="outline" onClick={loadReport}>
+            <RotateCcw className="size-4" />
+            Refresh
+          </Button>
+          <Button onClick={() => router.push("/dashboard")}>
+            Back to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (report.generationStatus === "failed") {
+    const message = report.generationError?.reason || report.generationError?.message || "Interview generation failed.";
+
+    return (
+      <div className="mx-auto max-w-xl rounded-xl border border-destructive/30 bg-card/90 p-8 text-center">
+        <p className="text-lg font-semibold text-white">{message}</p>
+        <p className="mt-2 text-sm text-muted-foreground">
+          No partial strategy was opened because the background job did not complete.
+        </p>
+        <div className="mt-5 flex justify-center gap-3">
+          <Button variant="outline" onClick={loadReport}>
+            <RotateCcw className="size-4" />
+            Retry Status
+          </Button>
+          <Button onClick={() => router.push("/dashboard")}>
+            Back to Dashboard
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   const isAtsSection = activeSection === "ats";
 
   if (isAtsSection) {

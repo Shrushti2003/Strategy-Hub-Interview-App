@@ -23,6 +23,13 @@ interviewRouter.post(
 )
 
 /**
+ * @route GET /api/interview/:reportId/status
+ * @description get async interview generation status.
+ * @access private
+ */
+interviewRouter.get("/:reportId/status", authMiddleware.authUser, interviewController.getInterviewReportStatusController)
+
+/**
  * @route GET /api/interview/report/:interviewId
  * @description get interview report by interviewId.
  * @access private

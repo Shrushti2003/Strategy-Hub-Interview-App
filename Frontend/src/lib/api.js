@@ -93,6 +93,11 @@ export async function getReportById(id) {
   return res.data
 }
 
+export async function getReportStatus(id) {
+  const res = await api.get(`/api/interview/${id}/status`)
+  return res.data
+}
+
 export async function getAllReports() {
   const res = await api.get("/api/interview")
   return res.data

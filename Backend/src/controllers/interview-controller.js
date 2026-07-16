@@ -75,6 +75,14 @@ async function timedGenerationStage(step, message, task, extra = {}) {
     }
 }
 
+function runDetached(task) {
+    setImmediate(() => {
+        task().catch((error) => {
+            logGenerationFailure("background-job:unhandled", error)
+        })
+    })
+}
+
 function logGenerationFailure(step, error, payload = {}) {
     const location = stackLocation(error)
     const diagnostic = {
@@ -325,6 +333,53 @@ function reportToMarkdown(interviewReport) {
     return lines.join("\n")
 }
 
+async function createInterviewReportRecord(payload) {
+    return isDbConnected()
+        ? interviewReportModel.create(payload)
+        : localStore.createInterviewReport(payload)
+}
+
+async function updateInterviewReportRecord(reportId, userId, updates) {
+    return isDbConnected()
+        ? interviewReportModel.findOneAndUpdate(
+            { _id: reportId, user: userId },
+            updates,
+            { new: true }
+        )
+        : localStore.updateInterviewReport(String(reportId), String(userId), updates)
+}
+
+function publicReportSummary(report) {
+    const value = report?.toObject ? report.toObject() : report
+
+    return {
+        _id: value?._id,
+        title: value?.title,
+        jobTitle: value?.jobTitle,
+        company: value?.company,
+        matchScore: value?.matchScore || 0,
+        generationStatus: value?.generationStatus || "completed",
+        generationStage: value?.generationStage || "",
+        generationError: value?.generationError || {},
+        generationStartedAt: value?.generationStartedAt,
+        generationCompletedAt: value?.generationCompletedAt,
+        generationFailedAt: value?.generationFailedAt,
+        generationDurationMs: value?.generationDurationMs || 0,
+        createdAt: value?.createdAt,
+        updatedAt: value?.updatedAt
+    }
+}
+
+function serializeJobError(error) {
+    return {
+        message: sanitizeMessage(error?.message || "Interview generation failed."),
+        reason: sanitizeMessage(error?.reason || error?.message || "Interview generation failed."),
+        details: sanitizeMessage(error?.details || error?.stack || ""),
+        step: sanitizeMessage(error?.step || "interview-generation"),
+        timestamp: new Date()
+    }
+}
+
 async function extractTextFromFile(file) {
     if (!file) {
         return ""
@@ -461,117 +516,73 @@ async function generateInterViewReportController(req, res) {
     }
 
     try {
-        logGenerationStep("performance", "Upload parsing completed", timingPayload(totalStartedAt, {
-            resumeFile: uploadDiagnostics(resumeFile),
-            styleResumeFile: uploadDiagnostics(styleResumeFile)
-        }))
-
-        logGenerationStep("request:parse", "Parsed Job Description", {
-            preview: normalizedJobDescription.slice(0, 500)
-        })
-
-        const selfDescriptionStartedAt = Date.now()
-        logGenerationStep("performance", "Self Description normalization completed", timingPayload(selfDescriptionStartedAt, {
-            selfDescriptionChars: normalizedSelfDescription.length
-        }))
-
-        const resumeText = await timedGenerationStage(
-            "performance",
-            "Resume extraction",
-            () => extractTextFromFile(resumeFile),
-            { hasResume: Boolean(resumeFile) }
-        )
-        const styleResumeText = await timedGenerationStage(
-            "performance",
-            "Style resume extraction",
-            () => extractTextFromFile(styleResumeFile),
-            { hasStyleResume: Boolean(styleResumeFile) }
-        )
-        logGenerationStep("request:files", "Resume text extracted", {
-            resumeChars: resumeText.length,
-            styleResumeChars: styleResumeText.length
-        })
-
-        const resumeStyleProfile = await timedGenerationStage(
-            "performance",
-            "Resume style analysis",
-            () => analyzeResumeStyle({ sampleResumeText: styleResumeText }),
-            { styleResumeChars: styleResumeText.length }
-        )
-        logGenerationStep("resume-style", "Resume style analysis completed", {
-            hasStyleProfile: Boolean(resumeStyleProfile)
-        })
-
-        const interViewReportByAi = await timedGenerationStage("performance", "Interview report generation", () => generateInterviewReport({
-            resume: resumeText,
+        const interviewReport = await timedGenerationStage("performance", "Processing report creation", () => createInterviewReportRecord({
+            user: req.user.id,
+            title: "Interview strategy is being generated",
+            jobTitle: "",
+            company: "",
+            resume: "",
+            styleResumeText: "",
+            resumeStyleProfile: {},
             selfDescription: normalizedSelfDescription,
             jobDescription: normalizedJobDescription,
-            user: req.user
+            questionState: {},
+            dashboardState: {},
+            matchScore: 0,
+            technicalQuestions: [],
+            behavioralQuestions: [],
+            resumeQuestions: [],
+            skillGaps: [],
+            preparationPlan: [],
+            roadmap: [],
+            strategy: {},
+            atsAnalysis: {},
+            resumeBuilder: {},
+            resumeSuggestions: [],
+            atsResumeData: {},
+            generationStatus: "processing",
+            generationStage: "queued",
+            generationError: {},
+            generationStartedAt: new Date(),
+            generationWarnings: []
         }), {
-            resumeChars: resumeText.length,
-            selfDescriptionChars: normalizedSelfDescription.length,
-            jobDescriptionChars: normalizedJobDescription.length
-        })
-        const generationWarnings = Array.isArray(interViewReportByAi.generationWarnings)
-            ? interViewReportByAi.generationWarnings
-            : []
-
-        logGenerationStep("service", "AI report generated", {
-            title: interViewReportByAi.title,
-            technicalQuestions: interViewReportByAi.technicalQuestions?.length || 0,
-            behavioralQuestions: interViewReportByAi.behavioralQuestions?.length || 0,
-            resumeQuestions: interViewReportByAi.resumeQuestions?.length || 0
-        })
-
-        logGenerationStep("database", "Database save started", {
             dbConnected: isDbConnected(),
             userId: req.user.id
         })
 
-        const interviewReport = await timedGenerationStage("performance", "Mongo save", async () => isDbConnected()
-            ? interviewReportModel.create({
-                user: req.user.id,
-                resume: resumeText,
-                styleResumeText,
-                resumeStyleProfile,
-                selfDescription: normalizedSelfDescription,
-                jobDescription: normalizedJobDescription,
-                questionState: {},
-                dashboardState: {},
-                ...interViewReportByAi
-            })
-            : localStore.createInterviewReport({
-                user: req.user.id,
-                resume: resumeText,
-                styleResumeText,
-                resumeStyleProfile,
-                selfDescription: normalizedSelfDescription,
-                jobDescription: normalizedJobDescription,
-                questionState: {},
-                dashboardState: {},
-                ...interViewReportByAi
-            }), {
-            dbConnected: isDbConnected(),
-            userId: req.user.id
-        })
+        const reportId = interviewReport._id
+        const userSnapshot = {
+            id: req.user.id,
+            _id: req.user._id,
+            username: req.user.username,
+            name: req.user.name,
+            email: req.user.email
+        }
 
-        logGenerationStep("database", "Database save completed", {
-            reportId: interviewReport._id
-        })
+        runDetached(() => processInterviewReportJob({
+            reportId,
+            userId: req.user.id,
+            user: userSnapshot,
+            resumeFile,
+            styleResumeFile,
+            normalizedSelfDescription,
+            normalizedJobDescription,
+            requestPayload,
+            totalStartedAt
+        }))
 
-        logGenerationStep("response", "Final response sent", {
-            reportId: interviewReport._id,
-            totalRuntimeMs: Date.now() - totalStartedAt
+        logGenerationStep("response", "Processing response sent", {
+            reportId,
+            status: "processing",
+            responseRuntimeMs: Date.now() - totalStartedAt
         })
 
         res.status(201).json({
             success: true,
-            partialSuccess: generationWarnings.length > 0,
-            generationWarnings,
-            message: generationWarnings.length
-                ? "Interview generated successfully. Resume Builder is temporarily unavailable due to Gemini API quota and can be regenerated later."
-                : "Interview report generated successfully.",
-            interviewReport
+            reportId,
+            status: "processing",
+            message: "Interview generation started.",
+            interviewReport: publicReportSummary(interviewReport)
         })
         logGenerationStep("performance", "Total request completed", timingPayload(totalStartedAt, {
             reportId: interviewReport._id,
@@ -585,6 +596,158 @@ async function generateInterViewReportController(req, res) {
         return sendGenerationError(res, error?.step || "interview-generation", error, requestPayload)
     }
 
+}
+
+async function processInterviewReportJob({
+    reportId,
+    userId,
+    user,
+    resumeFile,
+    styleResumeFile,
+    normalizedSelfDescription,
+    normalizedJobDescription,
+    requestPayload,
+    totalStartedAt
+}) {
+    const jobStartedAt = Date.now()
+    const reportIdString = String(reportId)
+
+    async function updateStage(stage, extra = {}) {
+        logGenerationStep("background-job", `Stage ${stage}`, {
+            reportId: reportIdString,
+            userId,
+            ...extra
+        })
+        await updateInterviewReportRecord(reportId, userId, {
+            generationStage: stage,
+            updatedAt: new Date()
+        })
+    }
+
+    try {
+        logGenerationStep("background-job", "Job started", {
+            reportId: reportIdString,
+            userId,
+            jobDescriptionChars: normalizedJobDescription.length,
+            selfDescriptionChars: normalizedSelfDescription.length,
+            hasResume: Boolean(resumeFile),
+            hasStyleResume: Boolean(styleResumeFile)
+        })
+
+        await updateStage("extracting-files")
+        const [resumeText, styleResumeText] = await Promise.all([
+            timedGenerationStage(
+                "performance",
+                "Resume extraction",
+                () => extractTextFromFile(resumeFile),
+                { reportId: reportIdString, hasResume: Boolean(resumeFile) }
+            ),
+            timedGenerationStage(
+                "performance",
+                "Style resume extraction",
+                () => extractTextFromFile(styleResumeFile),
+                { reportId: reportIdString, hasStyleResume: Boolean(styleResumeFile) }
+            )
+        ])
+
+        logGenerationStep("request:files", "Resume text extracted", {
+            reportId: reportIdString,
+            resumeChars: resumeText.length,
+            styleResumeChars: styleResumeText.length
+        })
+
+        await updateStage("analyzing-resume-style", {
+            resumeChars: resumeText.length,
+            styleResumeChars: styleResumeText.length
+        })
+        const resumeStyleProfile = analyzeResumeStyle({ sampleResumeText: styleResumeText })
+        logGenerationStep("resume-style", "Resume style analysis completed", {
+            reportId: reportIdString,
+            hasStyleProfile: Boolean(resumeStyleProfile)
+        })
+
+        await updateStage("generating-interview")
+        const interViewReportByAi = await timedGenerationStage("performance", "Interview report generation", () => generateInterviewReport({
+            resume: resumeText,
+            selfDescription: normalizedSelfDescription,
+            jobDescription: normalizedJobDescription,
+            user
+        }), {
+            reportId: reportIdString,
+            resumeChars: resumeText.length,
+            selfDescriptionChars: normalizedSelfDescription.length,
+            jobDescriptionChars: normalizedJobDescription.length
+        })
+        const generationWarnings = Array.isArray(interViewReportByAi.generationWarnings)
+            ? interViewReportByAi.generationWarnings
+            : []
+
+        logGenerationStep("service", "AI report generated", {
+            reportId: reportIdString,
+            title: interViewReportByAi.title,
+            technicalQuestions: interViewReportByAi.technicalQuestions?.length || 0,
+            behavioralQuestions: interViewReportByAi.behavioralQuestions?.length || 0,
+            resumeQuestions: interViewReportByAi.resumeQuestions?.length || 0
+        })
+
+        await updateStage("saving-report")
+        const completedAt = Date.now()
+        const updatedReport = await timedGenerationStage("performance", "Mongo completion update", () => updateInterviewReportRecord(reportId, userId, {
+            resume: resumeText,
+            styleResumeText,
+            resumeStyleProfile,
+            selfDescription: normalizedSelfDescription,
+            jobDescription: normalizedJobDescription,
+            questionState: {},
+            dashboardState: {},
+            ...interViewReportByAi,
+            generationStatus: "completed",
+            generationStage: "completed",
+            generationError: {},
+            generationCompletedAt: new Date(completedAt),
+            generationDurationMs: completedAt - jobStartedAt,
+            generationWarnings
+        }), {
+            reportId: reportIdString,
+            dbConnected: isDbConnected(),
+            userId
+        })
+
+        logGenerationStep("background-job", "Job completed", {
+            reportId: reportIdString,
+            status: updatedReport?.generationStatus || "completed",
+            totalRuntimeMs: Date.now() - totalStartedAt,
+            backgroundRuntimeMs: Date.now() - jobStartedAt,
+            warnings: generationWarnings.length
+        })
+    } catch (error) {
+        const diagnostic = logGenerationFailure(error?.step || "background-job", error, {
+            ...requestPayload,
+            reportId: reportIdString
+        })
+        const failedAt = Date.now()
+        const generationError = serializeJobError(error)
+
+        await updateInterviewReportRecord(reportId, userId, {
+            generationStatus: "failed",
+            generationStage: generationError.step || "failed",
+            generationError,
+            generationFailedAt: new Date(failedAt),
+            generationDurationMs: failedAt - jobStartedAt,
+            generationWarnings: [],
+            title: "Interview generation failed"
+        })
+
+        logGenerationStep("background-job", "Job failed and report updated", {
+            reportId: reportIdString,
+            userId,
+            errorMessage: generationError.message,
+            step: generationError.step,
+            filename: diagnostic.filename,
+            line: diagnostic.line,
+            backgroundRuntimeMs: Date.now() - jobStartedAt
+        })
+    }
 }
 
 /**
@@ -838,6 +1001,56 @@ async function getInterviewReportByIdController(req, res) {
     })
 }
 
+/**
+ * @description Controller to get async interview generation status by reportId.
+ */
+async function getInterviewReportStatusController(req, res) {
+    const { reportId } = req.params
+
+    if (isDbConnected() && !mongoose.Types.ObjectId.isValid(reportId)) {
+        return res.status(404).json({
+            message: "Interview report not found."
+        })
+    }
+
+    const interviewReport = isDbConnected()
+        ? await interviewReportModel
+            .findOne({ _id: reportId, user: req.user.id })
+            .select("_id generationStatus generationStage generationError generationStartedAt generationCompletedAt generationFailedAt generationDurationMs generationWarnings updatedAt")
+        : localStore.findInterviewReportById(reportId, req.user.id)
+
+    if (!interviewReport) {
+        return res.status(404).json({
+            message: "Interview report not found."
+        })
+    }
+
+    const report = interviewReport.toObject ? interviewReport.toObject() : interviewReport
+    const status = report.generationStatus || "completed"
+
+    const payload = {
+        reportId: report._id,
+        status,
+        stage: report.generationStage || "",
+        updatedAt: report.updatedAt
+    }
+
+    if (status === "completed") {
+        payload.generationWarnings = report.generationWarnings || []
+        payload.completedAt = report.generationCompletedAt
+        payload.durationMs = report.generationDurationMs || 0
+    }
+
+    if (status === "failed") {
+        payload.error = report.generationError?.reason || report.generationError?.message || "Interview generation failed."
+        payload.details = report.generationError || {}
+        payload.failedAt = report.generationFailedAt
+        payload.durationMs = report.generationDurationMs || 0
+    }
+
+    res.status(200).json(payload)
+}
+
 
 /** 
  * @description Controller to get all interview reports of logged in user.
@@ -849,7 +1062,7 @@ async function getAllInterviewReportsController(req, res) {
         interviewReports = await interviewReportModel
             .find({ user: req.user.id })
             .sort({ createdAt: -1 })
-            .select("_id title jobTitle company matchScore createdAt updatedAt")
+            .select("_id title jobTitle company matchScore generationStatus generationStage generationError generationStartedAt generationCompletedAt generationFailedAt generationDurationMs createdAt updatedAt")
     } else {
         interviewReports = localStore.findInterviewReportsByUser(req.user.id).map((report) => ({
             _id: report._id,
@@ -857,6 +1070,13 @@ async function getAllInterviewReportsController(req, res) {
             jobTitle: report.jobTitle,
             company: report.company,
             matchScore: report.matchScore,
+            generationStatus: report.generationStatus || "completed",
+            generationStage: report.generationStage || "",
+            generationError: report.generationError || {},
+            generationStartedAt: report.generationStartedAt,
+            generationCompletedAt: report.generationCompletedAt,
+            generationFailedAt: report.generationFailedAt,
+            generationDurationMs: report.generationDurationMs || 0,
             createdAt: report.createdAt
         }))
     }
@@ -972,6 +1192,7 @@ function writeSseEvent(res, event, data) {
 
 module.exports = {
     generateInterViewReportController,
+    getInterviewReportStatusController,
     getInterviewReportByIdController,
     getAllInterviewReportsController,
     generateResumePdfController,
