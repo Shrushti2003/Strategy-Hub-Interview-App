@@ -20,7 +20,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { deleteReport, generateReport, getAllReports, getReportStatus } from "@/lib/api";
+import { deleteReport, generateReport, getAllReports, getReportById, getReportStatus } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const MAX_JOB_DESCRIPTION_LENGTH = 5000;
@@ -195,9 +195,19 @@ export default function AiGenerationFlow() {
       });
 
       if (statusData.status === "completed") {
+        const reportData = await getReportById(reportId);
+        const completedReport = reportData.interviewReport;
+
+        if (!completedReport?._id) {
+          throw new Error("The completed report could not be loaded.");
+        }
+
+        setReports((current) => [
+          completedReport,
+          ...current.filter((item) => item._id !== reportId),
+        ]);
         setIsGenerating(false);
         setProcessingJob(null);
-        await loadReports();
         toast.success("Generation completed.");
         router.push(`/dashboard/interview/${reportId}`);
         return;

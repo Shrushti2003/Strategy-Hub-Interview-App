@@ -7,6 +7,7 @@ const localStore = require("../services/local-store")
 const { sanitizeMessage } = require("../config/env")
 const { GenerationStepError } = require("../services/gemini/errors")
 const { normalizeAtsResumeData } = require("../services/gemini/ats-generator")
+const { logPipelineSnapshot } = require("../services/gemini/pipeline-snapshot")
 
 function isDbConnected() {
     return mongoose.connection.readyState === 1
@@ -344,7 +345,7 @@ async function updateInterviewReportRecord(reportId, userId, updates) {
         ? interviewReportModel.findOneAndUpdate(
             { _id: reportId, user: userId },
             { $set: updates },
-            { new: true, runValidators: true }
+            { returnDocument: "after", runValidators: true }
         )
         : localStore.updateInterviewReport(String(reportId), String(userId), updates)
 }
@@ -772,6 +773,10 @@ async function processInterviewReportJob({
             ? interViewReportByAi.generationWarnings
             : []
 
+        logPipelineSnapshot("background-job:after-report-generator", interViewReportByAi, {
+            reportId: reportIdString,
+            userId
+        })
         assertCompleteGeneratedReport(interViewReportByAi, "before-save")
 
         logGenerationStep("service", "AI report generated", {
@@ -800,10 +805,19 @@ async function processInterviewReportJob({
             generationDurationMs: completedAt - jobStartedAt,
             generationWarnings
         }
+        logPipelineSnapshot("background-job:before-mongo-completion-update", completionPayload, {
+            reportId: reportIdString,
+            userId
+        })
         const updatedReport = await timedGenerationStage("performance", "Mongo completion update", () => updateInterviewReportRecord(reportId, userId, completionPayload), {
             reportId: reportIdString,
             dbConnected: isDbConnected(),
             userId
+        })
+        logPipelineSnapshot("background-job:after-mongo-completion-update", updatedReport, {
+            reportId: reportIdString,
+            userId,
+            dbConnected: isDbConnected()
         })
 
         if (!updatedReport) {
@@ -822,6 +836,11 @@ async function processInterviewReportJob({
             userId
         })
         const savedReportValue = savedReport?.toObject ? savedReport.toObject() : savedReport
+        logPipelineSnapshot("background-job:after-mongo-completion-fetch", savedReportValue, {
+            reportId: reportIdString,
+            userId,
+            dbConnected: isDbConnected()
+        })
 
         assertCompleteGeneratedReport(savedReportValue, "after-save")
 
@@ -908,7 +927,7 @@ async function regenerateResumeBuilderController(req, res) {
             ? await interviewReportModel.findOneAndUpdate(
                 { _id: interviewId, user: req.user.id },
                 { resumeBuilder, atsResumeData },
-                { new: true }
+                { returnDocument: "after" }
             )
             : localStore.updateInterviewReport(interviewId, req.user.id, { resumeBuilder, atsResumeData })
 
@@ -996,7 +1015,7 @@ async function updateQuestionStateController(req, res) {
         ? await interviewReportModel.findOneAndUpdate(
             { _id: interviewId, user: req.user.id },
             { questionState: nextState },
-            { new: true }
+            { returnDocument: "after" }
         )
         : localStore.updateInterviewReport(interviewId, req.user.id, { questionState: nextState })
 
@@ -1029,7 +1048,7 @@ async function updateDashboardStateController(req, res) {
         ? await interviewReportModel.findOneAndUpdate(
             { _id: interviewId, user: req.user.id },
             { dashboardState },
-            { new: true }
+            { returnDocument: "after" }
         )
         : localStore.updateInterviewReport(interviewId, req.user.id, { dashboardState })
 
@@ -1108,6 +1127,10 @@ async function getInterviewReportByIdController(req, res) {
     }
 
     const reportValue = interviewReport.toObject ? interviewReport.toObject() : interviewReport
+    logPipelineSnapshot("report-endpoint:after-mongo-fetch", reportValue, {
+        reportId: String(interviewId),
+        userId: req.user.id
+    })
 
     if ((reportValue.generationStatus || "completed") === "completed") {
         try {
@@ -1171,6 +1194,10 @@ async function getInterviewReportStatusController(req, res) {
         try {
             interviewReport = await findInterviewReportRecord(reportId, req.user.id)
             const completeReport = interviewReport?.toObject ? interviewReport.toObject() : interviewReport
+            logPipelineSnapshot("status-endpoint:completed-full-report-fetch", completeReport, {
+                reportId: String(reportId),
+                userId: req.user.id
+            })
             assertCompleteGeneratedReport(completeReport, "status-read")
         } catch (error) {
             const generationError = serializeJobError(error)

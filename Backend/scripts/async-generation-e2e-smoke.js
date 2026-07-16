@@ -179,9 +179,13 @@ process.env.JWT_SECRET = process.env.JWT_SECRET || "strategy-hub-smoke-test-secr
 if (process.env.SMOKE_USE_REAL_GEMINI !== "true") {
   process.env.GOOGLE_GENAI_API_KEY = process.env.GOOGLE_GENAI_API_KEY || "smoke-test-key"
 }
-process.env.MONGO_URI = ""
+if (process.env.SMOKE_USE_MONGO !== "true") {
+  process.env.MONGO_URI = ""
+}
 
 const app = require("../src/app")
+const mongoose = require("mongoose")
+const connectToDB = require("../src/config/database")
 
 function cookieFrom(response) {
   return response.headers.get("set-cookie")?.split(";")[0] || ""
@@ -199,6 +203,10 @@ async function postJson(baseUrl, path, payload, cookie = "") {
 }
 
 async function main() {
+  if (process.env.SMOKE_USE_MONGO === "true") {
+    await connectToDB()
+  }
+
   const server = app.listen(0)
   await new Promise((resolve) => server.once("listening", resolve))
   const baseUrl = `http://127.0.0.1:${server.address().port}`
@@ -273,6 +281,9 @@ async function main() {
     }, null, 2))
   } finally {
     await new Promise((resolve) => server.close(resolve))
+    if (mongoose.connection.readyState !== 0) {
+      await mongoose.disconnect()
+    }
   }
 }
 

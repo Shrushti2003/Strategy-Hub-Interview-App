@@ -9,6 +9,7 @@ const {
 } = require("./prompt-builder")
 const { validateReport, validateSection } = require("./response-validator")
 const { GenerationStepError, logFailure, logStep } = require("./errors")
+const { logPipelineSnapshot } = require("./pipeline-snapshot")
 
 const contextCache = new Map()
 const DEFAULT_STAGE_CONCURRENCY = 2
@@ -166,7 +167,17 @@ async function generateStage({
         requestId,
         onRetry: onProgress
       })
+      logPipelineSnapshot(`${stage}:after-json-parse`, raw, {
+        requestId,
+        validationAttempt: attempt + 1,
+        promptChars,
+        estimatedPromptTokens: promptTokens
+      })
       const value = validate(pick(raw, sectionKey))
+      logPipelineSnapshot(`${stage}:after-response-validator`, value, {
+        requestId,
+        validationAttempt: attempt + 1
+      })
       const outputJson = JSON.stringify(value || {})
 
       logStep(stage, "Stage generation completed", {
@@ -359,7 +370,9 @@ async function generateInterviewReport({ resume = "", selfDescription = "", jobD
     resumeBuilder,
     generationWarnings
   })
+  logPipelineSnapshot("report-generator:after-merge", merged, { requestId })
   const report = validateReport(merged, context)
+  logPipelineSnapshot("report-generator:after-final-validation", report, { requestId })
   profileStageEnd(requestId, "Merge And Validate Report", mergeStartedAt, totalStartedAt, "SUCCESS")
 
   logStep("report-generator", "Sectioned report generation completed", {
